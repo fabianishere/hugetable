@@ -6,6 +6,7 @@ plugins {
 
 /* Project configuration */
 repositories {
+    mavenCentral()
     jcenter()
 }
 

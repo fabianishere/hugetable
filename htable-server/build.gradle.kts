@@ -10,5 +10,11 @@ application {
     mainClassName = "nl.tudelft.htable.server.Main"
 }
 
-dependencies {}
+dependencies {
+    implementation("com.typesafe.scala-logging:scala-logging_2.13:3.9.2")
+    implementation("org.apache.curator:curator-framework:4.3.0")
+    implementation("org.apache.curator:curator-recipes:4.3.0")
+
+    runtimeOnly("org.slf4j:slf4j-simple:1.7.30")
+}
 
