@@ -5,6 +5,7 @@ import java.util.concurrent.locks.LockSupport
 import com.typesafe.scalalogging.Logger
 import org.apache.curator.framework.CuratorFramework
 import org.apache.curator.framework.recipes.leader.{LeaderSelector, LeaderSelectorListenerAdapter}
+import org.apache.curator.utils.ZKPaths
 
 /**
  * Main implementation of a tablet server as described in the Google BigTable paper.
@@ -21,7 +22,7 @@ class HTableServer(private val client: CuratorFramework, val root: String) exten
   /**
    * The [LeaderSelector] instance for performing a leader election via ZooKeeper.
    */
-  private val leaderSelector = new LeaderSelector(client, s"$root/leader", new LeaderSelectorListenerAdapter {
+  private val leaderSelector = new LeaderSelector(client, ZKPaths.makePath(root, "leader"), new LeaderSelectorListenerAdapter {
     override def takeLeadership(client: CuratorFramework): Unit = {
       log.info("I took Leadership!")
       Thread.sleep(10000)

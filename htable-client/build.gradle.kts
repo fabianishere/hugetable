@@ -5,5 +5,6 @@ plugins {
     `project-convention`
 }
 
-dependencies {}
-
+dependencies {
+    api(project(":htable-api"))
+}
