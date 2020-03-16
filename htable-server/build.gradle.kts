@@ -13,10 +13,10 @@ application {
 dependencies {
     api(project(":htable-api"))
 
-    implementation("com.typesafe.scala-logging:scala-logging_2.13:3.9.2")
-    implementation("org.apache.curator:curator-framework:4.3.0")
-    implementation("org.apache.curator:curator-recipes:4.3.0")
+    implementation("com.typesafe.scala-logging:scala-logging_${Library.SCALA_LIB}:${Library.SCALA_LOGGING}")
+    implementation("org.apache.curator:curator-framework:${Library.CURATOR}")
+    implementation("org.apache.curator:curator-recipes:${Library.CURATOR}")
 
-    runtimeOnly("org.slf4j:slf4j-simple:1.7.30")
+    runtimeOnly("org.slf4j:slf4j-simple:${Library.SLF4J}")
 }
 
