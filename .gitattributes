@@ -3,5 +3,5 @@
 # These are explicitly windows files and should use crlf
 *.bat           text eol=crlf
 
-# Gradle does not buils when this file uses CRLF
-buildSrc/src/main/kotlin/project-convention.gradle.kts  text eol=lf
+# See https://github.com/gradle/gradle/issues/12248
+buildSrc/src/main/**/*.gradle.kts  text eol=lf
