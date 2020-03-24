@@ -7,15 +7,18 @@ import java.util.concurrent.locks.LockSupport
 
 import akka.NotUsed
 import akka.actor.ActorSystem
-import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
-import akka.stream.{ActorMaterializer, Materializer}
+import akka.http.scaladsl.{Http, HttpConnectionContext}
+import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import com.typesafe.config.ConfigFactory
 import com.typesafe.scalalogging.Logger
-import nl.tudelft.htable.protocol.{ClientService, ClientServiceHandler, MutateRequest, MutateResponse, ReadRequest, ReadResponse}
+import nl.tudelft.htable.protocol.client._
 import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.framework.recipes.leader.{LeaderSelector, LeaderSelectorListenerAdapter}
+import org.apache.curator.framework.recipes.leader.{
+  LeaderSelector,
+  LeaderSelectorListenerAdapter
+}
 import org.apache.curator.framework.recipes.nodes.GroupMember
 import org.apache.zookeeper.CreateMode
 
@@ -27,6 +30,7 @@ import scala.concurrent.{ExecutionContext, Future}
  * @param client The ZooKeeper client to use for synchronization.
  */
 class HTableServer(private val client: CuratorFramework) extends Runnable {
+
   /**
    * The logger instance of this class.
    */
@@ -35,17 +39,23 @@ class HTableServer(private val client: CuratorFramework) extends Runnable {
   /**
    * The [LeaderSelector] instance for performing a leader election via ZooKeeper.
    */
-  private val leaderSelector = new LeaderSelector(client, "/leader", new LeaderSelectorListenerAdapter {
-    override def takeLeadership(client: CuratorFramework): Unit = {
-      log.info("I took Leadership!")
-      Thread.sleep(10000)
-    }
-  })
+  private val leaderSelector =
+    new LeaderSelector(
+      client,
+      "/leader",
+      new LeaderSelectorListenerAdapter {
+        override def takeLeadership(client: CuratorFramework): Unit = {
+          log.info("I took Leadership!")
+          Thread.sleep(10000)
+        }
+      }
+    )
 
   /**
    * The [GroupMember] instance for keeping track of the tablet servers.
    */
-  private val membership = new GroupMember(client, "/servers", UUID.randomUUID().toString)
+  private val membership =
+    new GroupMember(client, "/servers", UUID.randomUUID().toString)
 
   /**
    * Run the main logic of the server.
@@ -65,7 +75,8 @@ class HTableServer(private val client: CuratorFramework) extends Runnable {
     startServer()
 
     // Register root tablet
-    client.create()
+    client
+      .create()
       .withMode(CreateMode.EPHEMERAL)
       .forPath("/root", serialize(new InetSocketAddress("127.0.0.1", 8080)))
 
@@ -90,8 +101,8 @@ class HTableServer(private val client: CuratorFramework) extends Runnable {
     val system = ActorSystem("HelloWorld", conf)
 
     // Akka boot up code
-    implicit val sys: ActorSystem = system
-    implicit val mat: Materializer = Materializer(sys)
+    implicit val sys: ActorSystem     = system
+    implicit val mat: Materializer    = Materializer(sys)
     implicit val ec: ExecutionContext = sys.dispatcher
 
     // Create service handlers
@@ -103,21 +114,25 @@ class HTableServer(private val client: CuratorFramework) extends Runnable {
       service,
       interface = "127.0.0.1",
       port = 8080,
-      connectionContext = HttpConnectionContext())
+      connectionContext = HttpConnectionContext()
+    )
 
     // report successful binding
-    binding.foreach { binding => log.info(s"gRPC server bound to: ${binding.localAddress}") }
+    binding.foreach { binding =>
+      log.info(s"gRPC server bound to: ${binding.localAddress}")
+    }
   }
 
   private def serialize(value: InetSocketAddress): Array[Byte] = {
     val stream: ByteArrayOutputStream = new ByteArrayOutputStream()
-    val oos = new ObjectOutputStream(stream)
+    val oos                           = new ObjectOutputStream(stream)
     oos.writeObject(value)
     oos.close()
     stream.toByteArray
   }
 
   class ClientServiceImpl(implicit mat: Materializer) extends ClientService {
+
     /**
      * Read the specified row (range) and stream back the response.
      */
@@ -134,4 +149,5 @@ class HTableServer(private val client: CuratorFramework) extends Runnable {
       Future.successful(MutateResponse())
     }
   }
+
 }

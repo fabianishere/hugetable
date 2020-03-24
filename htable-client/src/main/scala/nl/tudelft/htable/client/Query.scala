@@ -5,6 +5,4 @@ package nl.tudelft.htable.client
  *
  * @param table The name of the table to query.
  */
-final case class Query(val table: String) {
-
-}
+final case class Query(val table: String) {}

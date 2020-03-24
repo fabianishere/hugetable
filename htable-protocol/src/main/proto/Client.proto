@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 option java_multiple_files = true;
-option java_package = "nl.tudelft.htable.protocol";
+option java_package = "nl.tudelft.htable.protocol.client";
 
 // A non-contiguous set of rows.
 message RowSet {

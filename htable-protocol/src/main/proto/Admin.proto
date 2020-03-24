@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "nl.tudelft.htable.protocol.admin";
+
+// Request message for [AdminService.CreateTable].
+message CreateTableRequest {
+    // The name by which the new table should be referred to within the cluster.
+    string table_name = 1;
+}
+
+// Request message for [AdminService.DeleteTable].
+message DeleteTableRequest {
+    // The name of the table to delete.
+    string table_name = 1;
+}
+
+// Response message for [AdminService.CreateTable]
+message CreateTableResponse {}
+
+// Response message for [AdminService.DeleteTable]
+message DeleteTableResponse {}
+
+service AdminService {
+    // Create a new table in the cluster.
+    rpc CreateTable (CreateTableRequest) returns (CreateTableResponse) {}
+
+    // Delete a table in the cluster.
+    rpc DeleteTable(DeleteTableRequest) returns (DeleteTableResponse) {}
+}
