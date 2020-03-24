@@ -13,7 +13,7 @@ import akka.stream.{ActorMaterializer, Materializer}
 import akka.stream.scaladsl.Source
 import com.typesafe.config.ConfigFactory
 import com.typesafe.scalalogging.Logger
-import nl.tudelft.htable.protocol.{ClientService, ClientServiceHandler, ReadRequest, ReadResponse}
+import nl.tudelft.htable.protocol.{ClientService, ClientServiceHandler, MutateRequest, MutateResponse, ReadRequest, ReadResponse}
 import org.apache.curator.framework.CuratorFramework
 import org.apache.curator.framework.recipes.leader.{LeaderSelector, LeaderSelectorListenerAdapter}
 import org.apache.curator.framework.recipes.nodes.GroupMember
@@ -124,6 +124,14 @@ class HTableServer(private val client: CuratorFramework) extends Runnable {
     override def read(in: ReadRequest): Source[ReadResponse, NotUsed] = {
       log.info("Received READ request")
       Source.single(ReadResponse())
+    }
+
+    /**
+     * Mutate a specified row in a table.
+     */
+    override def mutate(in: MutateRequest): Future[MutateResponse] = {
+      log.info("Received MUTATE request")
+      Future.successful(MutateResponse())
     }
   }
 }
