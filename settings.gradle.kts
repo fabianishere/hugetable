@@ -1,6 +1,7 @@
 rootProject.name = "hugetable"
 
-include("htable-api")
+include("htable-protocol")
 include("htable-client")
-include("htable-server:core")
-include("htable-server:cli")
+include("htable-client-cli")
+include("htable-server")
+include("htable-server-cli")

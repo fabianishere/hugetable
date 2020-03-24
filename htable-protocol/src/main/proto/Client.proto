@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "nl.tudelft.htable.protocol";
+
+// A non-contiguous set of rows.
+message RowSet {
+    // Single rows included in the set.
+    repeated bytes row_keys = 1;
+}
+
+// Request message for ClientService.Read.
+message ReadRequest {
+    // The unique name of the table from which to read.
+    string table_name = 1;
+
+    // The (range of) row keys to read from.
+    RowSet rows = 2;
+
+    // The maximum number of rows to read.
+    int64 rows_limit = 3;
+}
+
+// Response message for ClientService.Read.
+message ReadResponse {
+    // A piece of a row's contents returned as part of the read
+    // response stream.
+    message RowCell {
+        // The row key for this cell.
+        bytes row_key = 1;
+
+        // The cell's qualifier (column name).
+        bytes qualifier = 2;
+
+        // The cell's stored timestamp in milliseconds, which also uniquely identifies it
+        // within its column.
+        int64 timestamp = 3;
+
+        // The value stored in the cell.
+        bytes value = 4;
+    }
+
+    // The cells contained in this response.
+    repeated RowCell cells = 1;
+}
+
+service ClientService {
+    // Read the specified row (range) and stream back the response.
+    rpc Read(ReadRequest) returns (stream ReadResponse) {}
+}
