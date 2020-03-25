@@ -13,9 +13,10 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import nl.tudelft.htable.protocol.admin._
 import nl.tudelft.htable.protocol.client._
+import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
 import org.apache.curator.framework.CuratorFramework
+import org.apache.curator.framework.recipes.cache.ChildData
 import org.apache.curator.framework.recipes.leader.{LeaderLatch, LeaderLatchListener}
-import org.apache.curator.framework.recipes.nodes.GroupMember
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -47,6 +48,16 @@ object HTableServer {
    * Internal message indicating that the server was overthrown.
    */
   private final case object Overthrown extends Command
+
+  /**
+   * Internal message sent when a new node has joined the cluster.
+   */
+  private final case class NodeJoined(data: ChildData) extends Command
+
+  /**
+   * Internal message sent when a node has left the cluster.
+   */
+  private final case class NodeLeft(data: ChildData) extends Command
 
   /**
    * Construct the main logic of the server.
@@ -106,15 +117,24 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
     Behaviors.setup { _ =>
       context.log.info("Joining ZooKeeper group")
 
+      // Perform leader election via ZooKeeper
       val leaderLatch = new LeaderLatch(zookeeper, "/master", uid)
+      leaderLatch.addListener(
+        new LeaderLatchListener {
+          override def isLeader(): Unit = context.self ! HTableServer.Elected
+          override def notLeader(): Unit = context.self ! HTableServer.Overthrown
+        },
+        context.system.dispatchers.lookup(DispatcherSelector.blocking())
+      )
+      leaderLatch.start()
+
+      // Create group membership
       val membership =
         new GroupMember(zookeeper, "/servers", uid, Serialization.serialize(binding.localAddress))
-
-      leaderLatch.addListener(new LeaderLatchListener {
-        override def isLeader(): Unit = context.self.tell(HTableServer.Elected)
-        override def notLeader(): Unit = context.self.tell(HTableServer.Overthrown)
-      }, context.system.dispatchers.lookup(DispatcherSelector.blocking()))
-      leaderLatch.start()
+      membership.addListener(new GroupMemberListener {
+        override def memberJoined(data: ChildData): Unit = context.self ! HTableServer.NodeJoined(data)
+        override def memberLeft(data: ChildData): Unit = context.self ! HTableServer.NodeLeft(data)
+      })
       membership.start()
 
       started(binding, leaderLatch, membership)
@@ -135,6 +155,12 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
         case HTableServer.Elected =>
           context.log.info("Node is elected for leader")
           master(binding, leaderLatch, membership)
+        case HTableServer.NodeJoined(_) =>
+          context.log.info("Node has joined the cluster")
+          Behaviors.same
+        case HTableServer.NodeLeft(_) =>
+          context.log.info("Node has left the cluster")
+          Behaviors.same
       }
       .receiveSignal {
         case (_, PostStop) =>
@@ -159,7 +185,13 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
       .receiveMessage[HTableServer.Command] {
         case HTableServer.Overthrown =>
           context.log.info("Node was overthrown")
-          Behaviors.stopped
+          Behaviors.stopped // Kill the server when the node is overthrown
+        case HTableServer.NodeJoined(_) =>
+          context.log.info("Node has joined the cluster")
+          Behaviors.same
+        case HTableServer.NodeLeft(_) =>
+          context.log.info("Node has left the cluster")
+          Behaviors.same
       }
       .receiveSignal {
         case (_, PostStop) =>
