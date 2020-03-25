@@ -51,18 +51,17 @@ object HTableClient {
  * @param zookeeper The ZooKeeper client used to connect to the cluster.
  * @param actorSystem The actor system to drive the client.
  */
-private class HTableClientImpl(private val zookeeper: CuratorFramework,
-                               private val actorSystem: ActorSystem)
+private class HTableClientImpl(private val zookeeper: CuratorFramework, private val actorSystem: ActorSystem)
     extends HTableClient {
   private val promise = Promise[Done]()
 
-  implicit val sys: ActorSystem             = actorSystem
-  implicit val mat: Materializer            = Materializer(sys)
+  implicit val sys: ActorSystem = actorSystem
+  implicit val mat: Materializer = Materializer(sys)
   implicit val ec: ExecutionContextExecutor = sys.dispatcher
 
   override def read(query: Query): Source[Row, NotUsed] = {
     val rootAddress = deserialize(zookeeper.getData.forPath("/root"))
-    val client      = openClient(rootAddress)
+    val client = openClient(rootAddress)
     println("READ")
     client.read(ReadRequest()).map(_ => Row(ByteString.empty, Seq[RowCell]()))
   }
@@ -78,7 +77,7 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
   }
 
   private def deserialize(bytes: Array[Byte]): InetSocketAddress = {
-    val ois   = new ObjectInputStream(new ByteArrayInputStream(bytes))
+    val ois = new ObjectInputStream(new ByteArrayInputStream(bytes))
     val value = ois.readObject
     ois.close()
     value.asInstanceOf[InetSocketAddress]

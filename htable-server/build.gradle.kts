@@ -6,10 +6,10 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":htable-protocol"))
+    api("com.typesafe.akka:akka-actor-typed_${Library.SCALA_LIB}:${Library.AKKA}")
     api("org.apache.curator:curator-framework:${Library.CURATOR}")
 
-    implementation("com.typesafe.scala-logging:scala-logging_${Library.SCALA_LIB}:${Library.SCALA_LOGGING}")
+    implementation(project(":htable-protocol"))
     implementation("org.apache.curator:curator-recipes:${Library.CURATOR}")
 }
 

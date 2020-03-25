@@ -1,5 +1,6 @@
 package nl.tudelft.htable.server.cli
 
+import akka.actor.typed.ActorSystem
 import nl.tudelft.htable.server.core.HTableServer
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
@@ -19,16 +20,13 @@ object Main {
    * @param args The command line arguments passed to the program.
    */
   def main(args: Array[String]): Unit = {
-    val conf             = new Conf(args)
+    val conf = new Conf(args)
     val connectionString = conf.zookeeper.getOrElse(List()).mkString(",")
-    val zookeeper = CuratorFrameworkFactory.newClient(
-      connectionString,
-      new ExponentialBackoffRetry(1000, 3))
+    val zookeeper = CuratorFrameworkFactory.newClient(connectionString, new ExponentialBackoffRetry(1000, 3))
     zookeeper.start()
     zookeeper.blockUntilConnected()
 
-    val server = new HTableServer(zookeeper)
-    server.run()
+    ActorSystem(HTableServer(zookeeper), "htable")
   }
 
   /**

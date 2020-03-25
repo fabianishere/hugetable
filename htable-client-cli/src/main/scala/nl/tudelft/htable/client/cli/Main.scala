@@ -22,7 +22,7 @@ object Main {
    * @param args The command line arguments passed to the program.
    */
   def main(args: Array[String]): Unit = {
-    val conf             = new Conf(args)
+    val conf = new Conf(args)
     val connectionString = conf.zookeeper.getOrElse(List()).mkString(",")
     val zookeeper = CuratorFrameworkFactory.newClient(
       connectionString,
@@ -31,8 +31,8 @@ object Main {
     zookeeper.start()
     zookeeper.blockUntilConnected()
 
-    implicit val sys: ActorSystem             = ActorSystem("client")
-    implicit val mat: Materializer            = Materializer(sys)
+    implicit val sys: ActorSystem = ActorSystem("client")
+    implicit val mat: Materializer = Materializer(sys)
     implicit val ec: ExecutionContextExecutor = sys.dispatcher
 
     val client = HTableClient(zookeeper)
