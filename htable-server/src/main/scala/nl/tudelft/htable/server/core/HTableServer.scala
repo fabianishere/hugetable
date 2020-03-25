@@ -110,7 +110,10 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
       val membership =
         new GroupMember(zookeeper, "/servers", uid, Serialization.serialize(binding.localAddress))
 
-      leaderLatch.addListener(LeaderLatchListenerImpl, context.system.dispatchers.lookup(DispatcherSelector.blocking()))
+      leaderLatch.addListener(new LeaderLatchListener {
+        override def isLeader(): Unit = context.self.tell(HTableServer.Elected)
+        override def notLeader(): Unit = context.self.tell(HTableServer.Overthrown)
+      }, context.system.dispatchers.lookup(DispatcherSelector.blocking()))
       leaderLatch.start()
       membership.start()
 
@@ -186,14 +189,6 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
       port = 0, // Let the OS assign some port to us.
       connectionContext = HttpConnectionContext()
     )
-  }
-
-  /**
-   * A [LeaderLatchListener] that listens for leadership changes in ZooKeeper.
-   */
-  private object LeaderLatchListenerImpl extends LeaderLatchListener {
-    override def isLeader(): Unit = context.self.tell(HTableServer.Elected)
-    override def notLeader(): Unit = context.self.tell(HTableServer.Overthrown)
   }
 
   private object ClientServiceImpl extends ClientService {
