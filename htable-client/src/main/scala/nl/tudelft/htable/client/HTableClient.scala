@@ -9,7 +9,7 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import akka.{Done, NotUsed}
-import nl.tudelft.htable.protocol.client.{ClientServiceClient, ReadRequest}
+import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
 import org.apache.curator.framework.CuratorFramework
 
 import scala.concurrent.{ExecutionContextExecutor, Future, Promise}
@@ -23,6 +23,11 @@ trait HTableClient {
    * Query the rows of a table.
    */
   def read(query: Query): Source[Row, NotUsed]
+
+  /**
+   * Perform a mutation on a row.
+   */
+  def mutate(mutation: RowMutation): Future[Done]
 
   /**
    * Close the connection to the cluster asynchronously and returns a [Future]
@@ -64,6 +69,13 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
     val client = openClient(rootAddress)
     println("READ")
     client.read(ReadRequest()).map(_ => Row(ByteString.empty, Seq[RowCell]()))
+  }
+
+  override def mutate(mutation: RowMutation): Future[Done] = {
+    val rootAddress = deserialize(zookeeper.getData.forPath("/root"))
+    val client = openClient(rootAddress)
+    println("MUTATE")
+    client.mutate(MutateRequest()).map(_ => Done)
   }
 
   override def closed(): Future[Done] = promise.future
