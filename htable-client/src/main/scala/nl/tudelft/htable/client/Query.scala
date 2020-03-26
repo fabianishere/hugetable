@@ -25,7 +25,6 @@ final case class Query private (table: String, limit: Long, rowKeys: List[ByteSt
 }
 
 object Query {
-
   /**
    * Construct a HTable query for the specified table.
    *

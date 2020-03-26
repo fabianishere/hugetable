@@ -4,9 +4,9 @@ import java.io.{ByteArrayOutputStream, ObjectOutputStream}
 import java.net.InetSocketAddress
 
 /**
- * Utilities for serializing objects between tablet servers.
+ * Utilities for (de)serializing objects between tablet servers.
  */
-private[htable] object Serialization {
+private[htable] object SerializationUtils {
 
   /**
    * Serialize an [InetSocketAddress] to a byte string.

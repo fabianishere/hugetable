@@ -1,15 +1,14 @@
 package nl.tudelft.htable.client
 
-import java.io.{ByteArrayInputStream, ObjectInputStream}
 import java.net.InetSocketAddress
 
 import akka.actor.ActorSystem
 import akka.grpc.GrpcClientSettings
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
-import akka.util.ByteString
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
+import nl.tudelft.htable.client.SerializationUtils._
 import org.apache.curator.framework.CuratorFramework
 
 import scala.concurrent.{ExecutionContextExecutor, Future, Promise}
@@ -65,14 +64,28 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
   implicit val ec: ExecutionContextExecutor = sys.dispatcher
 
   override def read(query: Query): Source[Row, NotUsed] = {
-    val rootAddress = deserialize(zookeeper.getData.forPath("/root"))
+    val rootAddress = SerializationUtils.deserialize(zookeeper.getData.forPath("/root"))
     val client = openClient(rootAddress)
-    println("READ")
-    client.read(ReadRequest()).map(_ => Row(ByteString.empty, Seq[RowCell]()))
+    client
+      .read(SerializationUtils.toReadRequest(query))
+      .mapConcat(_.cells)
+      .sliding(2)
+      .splitAfter { slidingElements =>
+      if (slidingElements.size == 2) {
+        val current = slidingElements.head
+        val next = slidingElements.tail.head
+        current.rowKey != next.rowKey
+      } else {
+        false
+      }
+    }.map { cells =>
+      val first = cells.head
+      Row(first.rowKey, cells.map(cell => RowCell(cell.qualifier, cell.timestamp, cell.value)))
+    }.mergeSubstreams
   }
 
   override def mutate(mutation: RowMutation): Future[Done] = {
-    val rootAddress = deserialize(zookeeper.getData.forPath("/root"))
+    val rootAddress = SerializationUtils.deserialize(zookeeper.getData.forPath("/root"))
     val client = openClient(rootAddress)
     println("MUTATE")
     client.mutate(MutateRequest()).map(_ => Done)
@@ -86,13 +99,6 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
       .terminate()
       .onComplete(t => promise.complete(t.map(_ => Done)))
     promise.future
-  }
-
-  private def deserialize(bytes: Array[Byte]): InetSocketAddress = {
-    val ois = new ObjectInputStream(new ByteArrayInputStream(bytes))
-    val value = ois.readObject
-    ois.close()
-    value.asInstanceOf[InetSocketAddress]
   }
 
   private def openClient(address: InetSocketAddress): ClientServiceClient = {

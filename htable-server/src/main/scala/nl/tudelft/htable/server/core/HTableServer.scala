@@ -130,7 +130,7 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
 
       // Create group membership
       val membership =
-        new GroupMember(zookeeper, "/servers", uid, Serialization.serialize(binding.localAddress))
+        new GroupMember(zookeeper, "/servers", uid, SerializationUtils.serialize(binding.localAddress))
       membership.addListener(new GroupMemberListener {
         override def memberJoined(data: ChildData): Unit = context.self ! HTableServer.NodeJoined(data)
         override def memberLeft(data: ChildData): Unit = context.self ! HTableServer.NodeLeft(data)
