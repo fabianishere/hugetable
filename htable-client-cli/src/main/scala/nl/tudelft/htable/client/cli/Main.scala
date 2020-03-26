@@ -2,7 +2,9 @@ package nl.tudelft.htable.client.cli
 
 import akka.actor.ActorSystem
 import akka.stream.Materializer
-import nl.tudelft.htable.client.{HTableClient, Query}
+import akka.util.ByteString
+import nl.tudelft.htable.client.HTableClient
+import nl.tudelft.htable.core.Query
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.rogach.scallop.{ScallopConf, ScallopOption}
@@ -37,7 +39,7 @@ object Main {
 
     val client = HTableClient(zookeeper)
     client
-      .read(Query("metadata"))
+      .read(Query("metadata").withRow(ByteString("test")))
       .log("error logging")
       .runForeach(e => println(e))
       .onComplete(_ => client.close())

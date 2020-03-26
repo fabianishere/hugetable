@@ -1,6 +1,6 @@
-package nl.tudelft.htable.client
+package nl.tudelft.htable.core
 
-import akka.util.ByteString
+import scala.collection.immutable.ArraySeq
 
 /**
  * A builder class for constructing a row mutation.
@@ -8,7 +8,7 @@ import akka.util.ByteString
  * @param table The table in which to mutate a row.
  * @param key The key of the row to mutate.
  */
-final case class RowMutation private (table: String, key: ByteString, mutations: List[Mutation]) {
+final case class RowMutation private (table: String, key: ArraySeq[Byte], mutations: List[Mutation]) {
 
   /**
    * Append the specified cell to the row.
@@ -34,5 +34,5 @@ object RowMutation {
    * @param table The table to mutate a row in.
    * @param key   The key of the row to mutate.
    */
-  def apply(table: String, key: ByteString): RowMutation = RowMutation(table, key, List())
+  def apply(table: String, key: ArraySeq[Byte]): RowMutation = RowMutation(table, key, List())
 }

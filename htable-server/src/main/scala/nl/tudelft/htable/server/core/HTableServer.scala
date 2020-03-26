@@ -11,6 +11,7 @@ import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
+import nl.tudelft.htable.protocol.SerializationUtils
 import nl.tudelft.htable.protocol.admin._
 import nl.tudelft.htable.protocol.client._
 import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
@@ -161,6 +162,7 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
         case HTableServer.NodeLeft(_) =>
           context.log.info("Node has left the cluster")
           Behaviors.same
+        case _ => throw new IllegalArgumentException()
       }
       .receiveSignal {
         case (_, PostStop) =>
@@ -192,6 +194,7 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
         case HTableServer.NodeLeft(_) =>
           context.log.info("Node has left the cluster")
           Behaviors.same
+        case _ => throw new IllegalArgumentException()
       }
       .receiveSignal {
         case (_, PostStop) =>

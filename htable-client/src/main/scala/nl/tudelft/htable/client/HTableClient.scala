@@ -8,7 +8,10 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
-import nl.tudelft.htable.client.SerializationUtils._
+import nl.tudelft.htable.protocol.SerializationUtils._
+import nl.tudelft.htable.core
+import nl.tudelft.htable.core.{Query, Row, RowCell, RowMutation}
+import nl.tudelft.htable.protocol.SerializationUtils
 import org.apache.curator.framework.CuratorFramework
 
 import scala.concurrent.{ExecutionContextExecutor, Future, Promise}
@@ -71,17 +74,19 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
       .mapConcat(_.cells)
       .sliding(2)
       .splitAfter { slidingElements =>
-      if (slidingElements.size == 2) {
-        val current = slidingElements.head
-        val next = slidingElements.tail.head
-        current.rowKey != next.rowKey
-      } else {
-        false
+        if (slidingElements.size == 2) {
+          val current = slidingElements.head
+          val next = slidingElements.tail.head
+          current.rowKey != next.rowKey
+        } else {
+          false
+        }
       }
-    }.map { cells =>
-      val first = cells.head
-      Row(first.rowKey, cells.map(cell => RowCell(cell.qualifier, cell.timestamp, cell.value)))
-    }.mergeSubstreams
+      .map { cells =>
+        val first = cells.head
+        core.Row(first.rowKey, cells.map(cell => RowCell(cell.qualifier, cell.timestamp, cell.value)))
+      }
+      .mergeSubstreams
   }
 
   override def mutate(mutation: RowMutation): Future[Done] = {

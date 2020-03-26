@@ -38,16 +38,15 @@ class GroupMember(client: CuratorFramework, path: String, id: String, payload: A
    * Add a listener to the membership state.
    */
   def addListener(listener: GroupMemberListener): Unit = {
-    cache.getListenable.addListener(new PathChildrenCacheListener {
-      override def childEvent(client: CuratorFramework, event: PathChildrenCacheEvent): Unit = {
-        event.getType match {
-          case PathChildrenCacheEvent.Type.CHILD_ADDED =>
-            listener.memberJoined(event.getData)
-          case PathChildrenCacheEvent.Type.CHILD_UPDATED =>
-            listener.memberUpdated(event.getData)
-          case PathChildrenCacheEvent.Type.CHILD_REMOVED =>
-            listener.memberLeft(event.getData)
-        }
+    cache.getListenable.addListener((_: CuratorFramework, event: PathChildrenCacheEvent) => {
+      event.getType match {
+        case PathChildrenCacheEvent.Type.CHILD_ADDED =>
+          listener.memberJoined(event.getData)
+        case PathChildrenCacheEvent.Type.CHILD_UPDATED =>
+          listener.memberUpdated(event.getData)
+        case PathChildrenCacheEvent.Type.CHILD_REMOVED =>
+          listener.memberLeft(event.getData)
+        case _ => // We do not handle other events for now
       }
     })
   }
@@ -72,19 +71,19 @@ trait GroupMemberListener {
    *
    * @param data The data of the member.
    */
-  def memberJoined(data: ChildData) {}
+  def memberJoined(data: ChildData): Unit = {}
 
   /**
    * This method is invoked when a member's data is updated.
    *
    * @param data The data of the member.
    */
-  def memberUpdated(data: ChildData) {}
+  def memberUpdated(data: ChildData): Unit = {}
 
   /**
    * This method is invoked when a member left the group.
    *
    * @param data The date of the member that left.
    */
-  def memberLeft(data: ChildData) {}
+  def memberLeft(data: ChildData): Unit = {}
 }

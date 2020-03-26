@@ -1,4 +1,4 @@
-package nl.tudelft.htable.client
+package nl.tudelft.htable.core
 
 import akka.util.ByteString
 

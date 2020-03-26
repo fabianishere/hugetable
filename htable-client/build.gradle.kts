@@ -6,6 +6,7 @@ plugins {
 }
 
 dependencies {
+    api(project(":htable-core"))
     api("org.apache.curator:curator-framework:${Library.CURATOR}")
     api("com.typesafe.akka:akka-stream_${Library.SCALA_LIB}:${Library.AKKA}")
 

@@ -1,10 +1,11 @@
-package nl.tudelft.htable.client
+package nl.tudelft.htable.protocol
 
-import java.io.{ByteArrayInputStream, ObjectInputStream}
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, ObjectOutputStream}
 import java.net.InetSocketAddress
 
 import akka.util.ByteString
-import nl.tudelft.htable.protocol.client.{ReadRequest, RowSet}
+import nl.tudelft.htable.core.Query
+import nl.tudelft.htable.protocol.client.{ReadRequest, RowRange, RowSet}
 
 import scala.language.implicitConversions
 
@@ -12,6 +13,17 @@ import scala.language.implicitConversions
  * Utilities for (de)serializing objects between tablet servers.
  */
 private[htable] object SerializationUtils {
+  /**
+   * Serialize an [InetSocketAddress] to a byte string.
+   */
+  def serialize(value: InetSocketAddress): Array[Byte] = {
+    val stream: ByteArrayOutputStream = new ByteArrayOutputStream()
+    val oos = new ObjectOutputStream(stream)
+    oos.writeObject(value)
+    oos.close()
+    stream.toByteArray
+  }
+
   /**
    * Convert the specified byte string into a socket address.
    */
@@ -28,6 +40,7 @@ private[htable] object SerializationUtils {
   def toReadRequest(query: Query): ReadRequest = {
     val rowSet = RowSet(
       rowKeys = query.rowKeys.map(buf => buf),
+      rowRanges = query.ranges.map(range => RowRange(startKey = range.start, endKey = range.end))
     )
     ReadRequest(
       tableName = query.table,
@@ -37,14 +50,14 @@ private[htable] object SerializationUtils {
   }
 
   /**
-   * Translate an Akka ByteString into a Google Protobuf byte string.
+   * Translate an Akka byte string into a Google Protobuf byte string.
    */
-  implicit def akkaToProtobufByteString(byteString: ByteString): com.google.protobuf.ByteString =
+  implicit def akkaToProtobuf(byteString: ByteString): com.google.protobuf.ByteString =
     com.google.protobuf.ByteString.copyFrom(byteString.toByteBuffer)
 
   /**
    * Translate a Google Protobuf ByteString to Akka ByteString.
    */
-  implicit def protobufToAkkaByteString(byteString: com.google.protobuf.ByteString): ByteString =
+  implicit def protobufToAkka(byteString: com.google.protobuf.ByteString): ByteString =
     ByteString(byteString.asReadOnlyByteBuffer())
 }
