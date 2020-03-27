@@ -10,9 +10,9 @@ final case class Row(key: ByteString, cells: Seq[RowCell]) extends Ordered[Row] 
 }
 
 object Row {
+
   /**
    * The default ordering of a row.
    */
   private val ordering: Ordering[Row] = Ordering.by(_.key.toByteBuffer)
 }
-

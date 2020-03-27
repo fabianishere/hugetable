@@ -7,11 +7,9 @@ import akka.grpc.GrpcClientSettings
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.{Done, NotUsed}
-import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
-import nl.tudelft.htable.protocol.SerializationUtils._
-import nl.tudelft.htable.core
-import nl.tudelft.htable.core.{Query, Row, RowCell, RowMutation}
+import nl.tudelft.htable.core.{Query, Row, RowMutation}
 import nl.tudelft.htable.protocol.SerializationUtils
+import nl.tudelft.htable.protocol.client.ClientServiceClient
 import org.apache.curator.framework.CuratorFramework
 
 import scala.concurrent.{ExecutionContextExecutor, Future, Promise}
@@ -69,32 +67,13 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
   override def read(query: Query): Source[Row, NotUsed] = {
     val rootAddress = SerializationUtils.deserialize(zookeeper.getData.forPath("/root"))
     val client = openClient(rootAddress)
-    client
-      .read(SerializationUtils.toReadRequest(query))
-      .mapConcat(_.cells)
-      .sliding(2)
-      .splitAfter { slidingElements =>
-        // Group cells by their row
-        if (slidingElements.size == 2) {
-          val current = slidingElements.head
-          val next = slidingElements.tail.head
-          current.rowKey != next.rowKey
-        } else {
-          false
-        }
-      }
-      .map { cells =>
-        val first = cells.head
-        core.Row(first.rowKey, cells.map(cell => RowCell(cell.qualifier, cell.timestamp, cell.value)))
-      }
-      .mergeSubstreams
+    SerializationUtils.toRows(client.read(SerializationUtils.toReadRequest(query)))
   }
 
   override def mutate(mutation: RowMutation): Future[Done] = {
     val rootAddress = SerializationUtils.deserialize(zookeeper.getData.forPath("/root"))
     val client = openClient(rootAddress)
-    println("MUTATE")
-    client.mutate(MutateRequest()).map(_ => Done)
+    client.mutate(SerializationUtils.toMutateRequest(mutation)).map(_ => Done)
   }
 
   override def closed(): Future[Done] = promise.future

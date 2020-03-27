@@ -3,8 +3,8 @@ package nl.tudelft.htable.server.core.curator
 import java.io.Closeable
 
 import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.framework.recipes.cache.{ChildData, PathChildrenCache, PathChildrenCacheEvent, PathChildrenCacheListener}
-import org.apache.curator.framework.recipes.nodes.{PersistentNode, PersistentNodeListener}
+import org.apache.curator.framework.recipes.cache.{ChildData, PathChildrenCache, PathChildrenCacheEvent}
+import org.apache.curator.framework.recipes.nodes.PersistentNode
 import org.apache.curator.utils.ZKPaths
 import org.apache.zookeeper.CreateMode
 
@@ -18,7 +18,8 @@ import scala.collection.mutable
  * @param id The unique identifier of this group member.
  * @param payload The payload of the member.
  */
-private[htable] class GroupMember(client: CuratorFramework, path: String, val id: String, payload: Array[Byte]) extends Closeable {
+private[htable] class GroupMember(client: CuratorFramework, path: String, val id: String, payload: Array[Byte])
+    extends Closeable {
 
   private val node = new PersistentNode(client, CreateMode.EPHEMERAL, false, ZKPaths.makePath(path, id), payload)
   private val cache = new PathChildrenCache(client, path, true)
@@ -47,7 +48,6 @@ private[htable] class GroupMember(client: CuratorFramework, path: String, val id
       }
     })
   }
-
 
   /**
    * Return the current view of membership. The keys are the IDs

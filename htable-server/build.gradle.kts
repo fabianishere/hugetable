@@ -7,6 +7,7 @@ plugins {
 
 dependencies {
     api("com.typesafe.akka:akka-actor-typed_${Library.SCALA_LIB}:${Library.AKKA}")
+    api("com.typesafe.akka:akka-stream-typed_${Library.SCALA_LIB}:${Library.AKKA}")
     api("org.apache.curator:curator-framework:${Library.CURATOR}")
 
     implementation(project(":htable-protocol"))

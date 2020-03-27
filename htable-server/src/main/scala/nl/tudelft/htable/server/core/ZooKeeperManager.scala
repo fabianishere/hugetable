@@ -6,10 +6,14 @@ import nl.tudelft.htable.core.Node
 import nl.tudelft.htable.protocol.SerializationUtils
 import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
 import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.framework.recipes.cache.ChildData
+import org.apache.curator.framework.api.CuratorWatcher
+import org.apache.curator.framework.recipes.cache.{ChildData, NodeCache, NodeCacheListener, PathChildrenCache}
 import org.apache.curator.framework.recipes.leader.{LeaderLatch, LeaderLatchListener}
+import org.apache.curator.framework.recipes.nodes.{PersistentNode, PersistentNodeListener}
 import org.apache.curator.framework.state.ConnectionState
 import org.apache.curator.utils.ZKPaths
+import org.apache.zookeeper.data.Stat
+import org.apache.zookeeper.{CreateMode, WatchedEvent, Watcher}
 
 import scala.language.implicitConversions
 
@@ -32,6 +36,16 @@ object ZooKeeperManager {
    * Internal message indicating ZooKeeper disconnected.
    */
   private final case object Disconnected extends Command
+
+  /**
+   * Message to claim the root tablet.
+   */
+  final case object ClaimRoot extends Command
+
+  /**
+   * Message to unclaim the root tablet.
+   */
+  final case object UnclaimRoot extends Command
 
   /**
    * Events emitted by the [ZooKeeperManager].
@@ -59,6 +73,11 @@ object ZooKeeperManager {
   final case class NodeLeft(node: Node) extends Event
 
   /**
+   * Event emitted when the root tablet location was updated.
+   */
+  final case class RootUpdated(node: Option[Node]) extends Event
+
+  /**
    * Construct the behavior for the ZooKeeper manager.
    *
    * @param zookeeper The ZooKeeper client to use.
@@ -81,7 +100,7 @@ object ZooKeeperManager {
         .receiveMessage[Command] {
           case Connected    => connected(zookeeper, node, listener)
           case Disconnected => Behaviors.stopped
-          case _ => throw new IllegalStateException()
+          case _            => throw new IllegalStateException()
         }
         .receiveSignal {
           case (_, PostStop) =>
@@ -117,13 +136,37 @@ object ZooKeeperManager {
       )
       leaderLatch.start()
 
+      // Claim root
+      var rootClaim: Option[PersistentNode] = None
+
+      // Watch root
+      val cache = new NodeCache(zookeeper, "/root")
+      cache.getListenable.addListener(() => listener ! RootUpdated(Option(cache.getCurrentData).map(toNode)))
+      cache.start()
+
       Behaviors
         .receiveMessage[Command] {
+          case ClaimRoot =>
+            context.log.info("Claiming root")
+            val pen = new PersistentNode(zookeeper,
+                                         CreateMode.EPHEMERAL,
+                                         false,
+                                         "/root",
+                                         SerializationUtils.serialize(node.address))
+            pen.start()
+            rootClaim = Some(pen)
+            Behaviors.same
+          case UnclaimRoot =>
+            context.log.info("Unclaiming root")
+            rootClaim.foreach(_.close())
+            rootClaim = None
+            Behaviors.same
           case Disconnected => throw new IllegalStateException("ZooKeeper has disconnected")
-          case _ => throw new IllegalStateException()
+          case _            => throw new IllegalStateException()
         }
         .receiveSignal {
           case (_, PostStop) =>
+            cache.close()
             leaderLatch.close()
             membership.close()
             zookeeper.close()

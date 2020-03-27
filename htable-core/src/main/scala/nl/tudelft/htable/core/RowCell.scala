@@ -12,6 +12,7 @@ final case class RowCell(qualifier: ByteString, timestamp: Long, value: ByteStri
 }
 
 object RowCell {
+
   /**
    * The default ordering of a row cell.
    */

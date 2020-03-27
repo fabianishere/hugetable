@@ -3,23 +3,28 @@ package nl.tudelft.htable.server.core
 import java.util
 
 import akka.NotUsed
+import akka.actor.typed._
+import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
-import akka.actor.typed._
-import akka.grpc.scaladsl.ServiceHandler
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
+import akka.util.Timeout
 import nl.tudelft.htable.core.{Node, Tablet}
+import nl.tudelft.htable.protocol.SerializationUtils
+import nl.tudelft.htable.protocol.SerializationUtils._
 import nl.tudelft.htable.protocol.admin._
 import nl.tudelft.htable.protocol.client._
 import nl.tudelft.htable.protocol.internal._
+import nl.tudelft.htable.server.core.util.AkkaServiceHandler
 import org.apache.curator.framework.CuratorFramework
 
 import scala.collection.mutable
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
+import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success}
 
 object HTableServer {
@@ -88,12 +93,13 @@ object HTableServer {
     Behaviors.setup { context =>
       val nodes = new mutable.HashSet[Node]()
       val tablets = new util.TreeMap[Tablet, ActorRef[TabletManager.Command]]()
+      var root: Option[Node] = None
 
       Behaviors
         .receiveMessage[AnyRef] {
           case ZooKeeperEvent(ZooKeeperManager.Elected) =>
             context.log.info("Node has been elected")
-            master(self, nodes.toSet, binding, zkRef)
+            master(self, nodes.toSet, root, tablets, binding, zkRef)
           case ZooKeeperEvent(ZooKeeperManager.NodeJoined(node)) =>
             context.log.info(s"Node ${node.uid} has joined")
             nodes += node
@@ -102,8 +108,37 @@ object HTableServer {
             context.log.info(s"Node ${node.uid} has left")
             nodes -= node
             Behaviors.same
+          case ZooKeeperEvent(ZooKeeperManager.RootUpdated(node)) =>
+            context.log.info(s"Root updated to $node")
+            root = node
+            Behaviors.same
           case NodeManager.Ping(replyTo) =>
             replyTo ! NodeManager.Pong(self)
+            Behaviors.same
+          case NodeManager.QueryTablets(replyTo) =>
+            replyTo ! NodeManager.QueryTabletsResponse(self, tablets.keySet().asScala.toSeq)
+            Behaviors.same
+          case NodeManager.Assign(newTablets) =>
+            tablets.forEach {
+              case (tablet, ref) =>
+                if (Tablet.isRoot(tablet)) {
+                  zkRef ! ZooKeeperManager.UnclaimRoot
+                }
+                context.stop(ref)
+            }
+            tablets.clear()
+
+            // Spawn new tablet managers
+            for (tablet <- newTablets) {
+              if (Tablet.isRoot(tablet)) {
+                zkRef ! ZooKeeperManager.ClaimRoot
+              }
+              tablets.put(tablet, context.spawnAnonymous(TabletManager()))
+            }
+
+            Behaviors.same
+          case NodeManager.Read(_, replyTo) =>
+            replyTo ! NodeManager.ReadResponse(Source.empty)
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }
@@ -122,14 +157,19 @@ object HTableServer {
    *
    * @param self The self that has been spawned.
    * @param nodes The active nodes in the cluster.
+   * @param tablets The tablets assigned to this server.
    * @param binding The server binding for the gRPC services.
    * @param zkRef The reference to the ZooKeeper actor.
    */
   def master(self: Node,
              nodes: Set[Node],
+             oldRoot: Option[Node],
+             tablets: util.TreeMap[Tablet, ActorRef[TabletManager.Command]],
              binding: Http.ServerBinding,
              zkRef: ActorRef[ZooKeeperManager.Command]): Behavior[AnyRef] =
     Behaviors.setup { context =>
+      var root = oldRoot
+
       // Spawn actors for the active nodes
       val nodeRefs = mutable.HashMap[Node, ActorRef[NodeManager.Command]]((self, context.self))
       for (node <- nodes if node != self) {
@@ -137,7 +177,8 @@ object HTableServer {
       }
 
       // Spawn the load balancer
-      val loadBalancer = context.spawn(LoadBalancer(nodeRefs.toMap), name = "load-balancer")
+      val loadBalancer = context.spawn(LoadBalancer(), name = "load-balancer")
+      loadBalancer ! LoadBalancer.Start(nodeRefs.toMap)
 
       Behaviors
         .receiveMessage[AnyRef] {
@@ -147,6 +188,10 @@ object HTableServer {
           case ZooKeeperEvent(ZooKeeperManager.NodeJoined(node)) =>
             context.log.info(s"Node ${node.uid} has joined")
             nodeRefs(node) = context.spawn(NodeManager(node), name = s"node-${node.uid}")
+
+            // Start a load balancing cycle
+            loadBalancer ! LoadBalancer.Start(nodeRefs.toMap)
+
             Behaviors.same
           case ZooKeeperEvent(ZooKeeperManager.NodeLeft(node)) =>
             context.log.info(s"Node ${node.uid} has left")
@@ -154,12 +199,44 @@ object HTableServer {
             // Kill node manager and remove from map
             nodeRefs.remove(node) match {
               case Some(nodeRef) => context.stop(nodeRef)
-              case _ =>
+              case _             =>
             }
 
+            // Start a load balancing cycle
+            loadBalancer ! LoadBalancer.Start(nodeRefs.toMap)
+
+            Behaviors.same
+          case ZooKeeperEvent(ZooKeeperManager.RootUpdated(node)) =>
+            context.log.info(s"Root updated to $node")
+            root = node
             Behaviors.same
           case NodeManager.Ping(replyTo) =>
             replyTo ! NodeManager.Pong(self)
+            Behaviors.same
+          case NodeManager.QueryTablets(replyTo) =>
+            replyTo ! NodeManager.QueryTabletsResponse(self, tablets.keySet().asScala.toSeq)
+            Behaviors.same
+          case NodeManager.Assign(newTablets) =>
+            tablets.forEach {
+              case (tablet, ref) =>
+                if (Tablet.isRoot(tablet)) {
+                  zkRef ! ZooKeeperManager.UnclaimRoot
+                }
+                context.stop(ref)
+            }
+            tablets.clear()
+
+            // Spawn new tablet managers
+            for (tablet <- newTablets) {
+              if (Tablet.isRoot(tablet)) {
+                zkRef ! ZooKeeperManager.ClaimRoot
+              }
+              tablets.put(tablet, context.spawnAnonymous(TabletManager()))
+            }
+
+            Behaviors.same
+          case NodeManager.Read(_, replyTo) =>
+            replyTo ! NodeManager.ReadResponse(Source.empty)
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }
@@ -176,7 +253,7 @@ object HTableServer {
   /**
    * Create the gRPC services.
    */
-  private def createServices(context: ActorContext[_]): Future[Http.ServerBinding] = {
+  private def createServices(context: ActorContext[AnyRef]): Future[Http.ServerBinding] = {
     // Akka boot up code
     implicit val sys: ActorSystem[Nothing] = context.system
     implicit val classicSys: akka.actor.ActorSystem = context.system.toClassic
@@ -184,13 +261,13 @@ object HTableServer {
     implicit val ec: ExecutionContext =
       context.system.dispatchers.lookup(DispatcherSelector.default())
 
-    val client = ClientServiceHandler.partial(new ClientServiceImpl)
-    val admin = AdminServiceHandler.partial(new AdminServiceImpl)
-    val internal = InternalServiceHandler.partial(new InternalServiceImpl)
+    val client = ClientServiceHandler.partial(new ClientServiceImpl(context.self))
+    val admin = AdminServiceHandler.partial(new AdminServiceImpl(context.self))
+    val internal = InternalServiceHandler.partial(new InternalServiceImpl(context.self))
 
     // Create service handlers
     val service: HttpRequest => Future[HttpResponse] =
-      ServiceHandler.concatOrNotFound(client, admin, internal)
+      AkkaServiceHandler.concatOrNotFound(client, admin, internal)
 
     // Bind service handler servers to localhost
     Http().bindAndHandleAsync(
@@ -201,13 +278,18 @@ object HTableServer {
     )
   }
 
-  private class ClientServiceImpl(implicit val mat: Materializer) extends ClientService {
+  private class ClientServiceImpl(self: ActorRef[NodeManager.Command])(implicit val sys: ActorSystem[Nothing])
+      extends ClientService {
+    implicit val timeout: Timeout = 3.seconds
 
     /**
      * Read the specified row (range) and stream back the response.
      */
     override def read(in: ReadRequest): Source[ReadResponse, NotUsed] = {
-      Source.single(ReadResponse())
+      Source
+        .future(self.ask[NodeManager.ReadResponse](ref => NodeManager.Read(toQuery(in), ref)))
+        .flatMapConcat(_.rows)
+        .map(row => ReadResponse(cells = row.cells.map(cell => SerializationUtils.toPBCell(row, cell))))
     }
 
     /**
@@ -218,7 +300,8 @@ object HTableServer {
     }
   }
 
-  private class AdminServiceImpl(implicit val mat: Materializer) extends AdminService {
+  private class AdminServiceImpl(self: ActorRef[NodeManager.Command])(implicit val sys: ActorSystem[Nothing])
+      extends AdminService {
 
     /**
      * Create a new table in the cluster.
@@ -231,21 +314,32 @@ object HTableServer {
     override def deleteTable(in: DeleteTableRequest): Future[DeleteTableResponse] = ???
   }
 
-  private class InternalServiceImpl(implicit mat: Materializer) extends InternalService {
+  private class InternalServiceImpl(self: ActorRef[NodeManager.Command])(implicit val sys: ActorSystem[Nothing])
+      extends InternalService {
+    // asking someone requires a timeout if the timeout hits without response
+    // the ask is failed with a TimeoutException
+    implicit val timeout: Timeout = 3.second
+    implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
 
     /**
      * Ping a self in the cluster.
      */
-    override def ping(in: PingRequest): Future[PingResponse] = ???
+    override def ping(in: PingRequest): Future[PingResponse] = self.ask(NodeManager.Ping).map(_ => PingResponse())
 
     /**
-     * Query a self for the tablets it's serving.
+     * QueryTablets a self for the tablets it's serving.
      */
-    override def query(in: QueryRequest): Future[QueryResponse] = ???
+    override def query(in: QueryRequest): Future[QueryResponse] =
+      self
+        .ask(NodeManager.QueryTablets)
+        .map(res => QueryResponse(res.tablets.map(t => t)))
 
     /**
      * Assign the specified tablets to the self.
      */
-    override def assign(in: AssignRequest): Future[AssignResponse] = ???
+    override def assign(in: AssignRequest): Future[AssignResponse] = {
+      self ! NodeManager.Assign(in.tablets.map(t => t))
+      Future.successful(AssignResponse())
+    }
   }
 }
