@@ -4,17 +4,17 @@ import akka.actor.typed.Behavior
 import akka.actor.typed.scaladsl.Behaviors
 
 /**
- * A load balancer rebalances the unassigned tablets to the active tablet servers.
+ * A tablet manager manages the requests of a single tablet.
  */
-object LoadBalancer {
+object TabletManager {
 
   /**
-   * Commands that are accepted by the [LoadBalancer].
+   * Commands that are accepted by the [TabletManager].
    */
   sealed trait Command
 
   /**
-   * Construct the behavior for the load balancer.
+   * Construct the behavior for the tablet manager.
    */
   def apply(): Behavior[Command] = Behaviors.empty
 }

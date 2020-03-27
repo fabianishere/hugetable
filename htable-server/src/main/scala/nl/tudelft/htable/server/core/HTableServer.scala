@@ -1,24 +1,30 @@
 package nl.tudelft.htable.server.core
 
+import java.util
 import java.util.UUID
 
-import akka.NotUsed
+import akka.actor.Scheduler
+import akka.{Done, NotUsed}
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
-import akka.actor.typed.{Behavior, DispatcherSelector, PostStop}
+import akka.actor.typed.scaladsl.AskPattern._
+import akka.actor.typed.{ActorRef, ActorSystem, Behavior, DispatcherSelector, PostStop}
 import akka.grpc.scaladsl.ServiceHandler
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
+import akka.util.Timeout
 import nl.tudelft.htable.protocol.SerializationUtils
 import nl.tudelft.htable.protocol.admin._
 import nl.tudelft.htable.protocol.client._
+import nl.tudelft.htable.protocol.internal.{InternalService, InternalServiceHandler, PingRequest, PingResponse}
 import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
 import org.apache.curator.framework.CuratorFramework
 import org.apache.curator.framework.recipes.cache.ChildData
 import org.apache.curator.framework.recipes.leader.{LeaderLatch, LeaderLatchListener}
 
+import scala.collection.mutable
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success}
@@ -61,6 +67,11 @@ object HTableServer {
   private final case class NodeLeft(data: ChildData) extends Command
 
   /**
+   * Message sent to the actor to check if still alive.
+   */
+  final case class Ping(replyTo: ActorRef[Done]) extends Command
+
+  /**
    * Construct the main logic of the server.
    */
   def apply(zookeeper: CuratorFramework): Behavior[Command] =
@@ -78,7 +89,8 @@ object HTableServer {
  */
 class HTableServer(private val context: ActorContext[HTableServer.Command], private val zookeeper: CuratorFramework) {
   // Akka boot up code
-  implicit val sys: akka.actor.ActorSystem = context.system.toClassic
+  implicit val sys: ActorSystem[Nothing] = context.system
+  implicit val classicSys: akka.actor.ActorSystem = context.system.toClassic
   implicit val mat: Materializer = Materializer(context.system)
   implicit val ec: ExecutionContext =
     context.system.dispatchers.lookup(DispatcherSelector.default())
@@ -87,6 +99,11 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
    * The unique identifier of the server.
    */
   private val uid = UUID.randomUUID().toString
+
+  /**
+   * The active tablets for this server.
+   */
+  private val tablets: util.TreeMap[TabletKey, ActorRef[TabletManager.Command]] = new util.TreeMap()
 
   context.log.info("Booting HTable server")
   context.log.info("Starting gRPC services")
@@ -212,10 +229,11 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
   private def createServices(): Future[Http.ServerBinding] = {
     val client = ClientServiceHandler.partial(ClientServiceImpl)
     val admin = AdminServiceHandler.partial(AdminServiceImpl)
+    val internal = InternalServiceHandler.partial(InternalServiceImpl)
 
     // Create service handlers
     val service: HttpRequest => Future[HttpResponse] =
-      ServiceHandler.concatOrNotFound(client, admin)
+      ServiceHandler.concatOrNotFound(client, admin, internal)
 
     // Bind service handler servers to localhost
     Http().bindAndHandleAsync(
@@ -256,5 +274,17 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
      * Delete a table in the cluster.
      */
     override def deleteTable(in: DeleteTableRequest): Future[DeleteTableResponse] = ???
+  }
+
+  private object InternalServiceImpl extends InternalService {
+    // Asking someone requires a timeout
+    implicit val timeout: Timeout = 3.seconds
+
+    /**
+     * Ping a node in the cluster.
+     */
+    override def ping(in: PingRequest): Future[PingResponse] =
+      context.self.ask(HTableServer.Ping)
+      .map(_ => PingResponse())
   }
 }

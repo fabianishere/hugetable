@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "nl.tudelft.htable.protocol.internal";
+
+// Request message for [InternalService.Ping].
+message PingRequest {}
+
+// Response message for [InternalService.Ping]
+message PingResponse {}
+
+
+service InternalService {
+    // Ping a node in the cluster.
+    rpc Ping (PingRequest) returns (PingResponse) {}
+}

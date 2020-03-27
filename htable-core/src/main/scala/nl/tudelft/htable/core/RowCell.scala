@@ -5,4 +5,4 @@ import akka.util.ByteString
 /**
  * A cell within a [Row].
  */
-case class RowCell(qualifier: ByteString, timestamp: Long, value: ByteString)
+final case class RowCell(qualifier: ByteString, timestamp: Long, value: ByteString)
