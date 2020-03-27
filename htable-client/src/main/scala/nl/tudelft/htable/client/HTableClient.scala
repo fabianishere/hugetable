@@ -74,6 +74,7 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
       .mapConcat(_.cells)
       .sliding(2)
       .splitAfter { slidingElements =>
+        // Group cells by their row
         if (slidingElements.size == 2) {
           val current = slidingElements.head
           val next = slidingElements.tail.head

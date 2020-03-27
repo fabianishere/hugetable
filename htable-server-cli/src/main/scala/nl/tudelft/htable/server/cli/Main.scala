@@ -1,6 +1,9 @@
 package nl.tudelft.htable.server.cli
 
+import java.util.UUID
+
 import akka.actor.typed.ActorSystem
+import com.typesafe.config.ConfigFactory
 import nl.tudelft.htable.server.core.HTableServer
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
@@ -23,10 +26,14 @@ object Main {
     val conf = new Conf(args)
     val connectionString = conf.zookeeper.getOrElse(List()).mkString(",")
     val zookeeper = CuratorFrameworkFactory.newClient(connectionString, new ExponentialBackoffRetry(1000, 3))
-    zookeeper.start()
-    zookeeper.blockUntilConnected()
 
-    ActorSystem(HTableServer(zookeeper), "htable")
+    // Important: enable HTTP/2 in ActorSystem's config
+    // We do it here programmatically, but you can also set it in the application.conf
+    val actorConf = ConfigFactory
+      .parseString("akka.http.server.preview.enable-http2 = on")
+      .withFallback(ConfigFactory.defaultApplication())
+
+    ActorSystem(HTableServer(UUID.randomUUID().toString, zookeeper), "htable", actorConf)
   }
 
   /**

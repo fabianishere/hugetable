@@ -3,15 +3,12 @@ package nl.tudelft.htable.server.core.curator
 import java.io.Closeable
 
 import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.framework.recipes.cache.{
-  ChildData,
-  PathChildrenCache,
-  PathChildrenCacheEvent,
-  PathChildrenCacheListener
-}
+import org.apache.curator.framework.recipes.cache.{ChildData, PathChildrenCache, PathChildrenCacheEvent, PathChildrenCacheListener}
 import org.apache.curator.framework.recipes.nodes.{PersistentNode, PersistentNodeListener}
 import org.apache.curator.utils.ZKPaths
 import org.apache.zookeeper.CreateMode
+
+import scala.collection.mutable
 
 /**
  * Group membership management. Adds this instance into a group and keeps a cache of members in the group.
@@ -21,7 +18,7 @@ import org.apache.zookeeper.CreateMode
  * @param id The unique identifier of this group member.
  * @param payload The payload of the member.
  */
-class GroupMember(client: CuratorFramework, path: String, id: String, payload: Array[Byte]) extends Closeable {
+private[htable] class GroupMember(client: CuratorFramework, path: String, val id: String, payload: Array[Byte]) extends Closeable {
 
   private val node = new PersistentNode(client, CreateMode.EPHEMERAL, false, ZKPaths.makePath(path, id), payload)
   private val cache = new PathChildrenCache(client, path, true)
@@ -49,6 +46,29 @@ class GroupMember(client: CuratorFramework, path: String, id: String, payload: A
         case _ => // We do not handle other events for now
       }
     })
+  }
+
+
+  /**
+   * Return the current view of membership. The keys are the IDs
+   * of the members. The values are each member's payload
+   *
+   * @return membership
+   */
+  def getMembers: Map[String, Array[Byte]] = {
+    val res = mutable.HashMap[String, Array[Byte]]()
+    var thisIdAdded = false
+
+    cache.getCurrentData.forEach { data =>
+      val id = ZKPaths.getNodeFromPath(data.getPath);
+      thisIdAdded ||= id == this.id
+      res.put(id, data.getData)
+    }
+
+    if (!thisIdAdded) {
+      res.put(this.id, node.getData) // this instance is always a member
+    }
+    res.toMap
   }
 
   /**

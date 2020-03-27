@@ -1,28 +1,21 @@
 package nl.tudelft.htable.server.core
 
 import java.util
-import java.util.UUID
 
-import akka.actor.Scheduler
-import akka.{Done, NotUsed}
+import akka.NotUsed
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
-import akka.actor.typed.scaladsl.AskPattern._
-import akka.actor.typed.{ActorRef, ActorSystem, Behavior, DispatcherSelector, PostStop}
+import akka.actor.typed._
 import akka.grpc.scaladsl.ServiceHandler
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
-import akka.util.Timeout
-import nl.tudelft.htable.protocol.SerializationUtils
+import nl.tudelft.htable.core.{Node, Tablet}
 import nl.tudelft.htable.protocol.admin._
 import nl.tudelft.htable.protocol.client._
-import nl.tudelft.htable.protocol.internal.{InternalService, InternalServiceHandler, PingRequest, PingResponse}
-import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
+import nl.tudelft.htable.protocol.internal._
 import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.framework.recipes.cache.ChildData
-import org.apache.curator.framework.recipes.leader.{LeaderLatch, LeaderLatchListener}
 
 import scala.collection.mutable
 import scala.concurrent.duration._
@@ -32,9 +25,9 @@ import scala.util.{Failure, Success}
 object HTableServer {
 
   /**
-   * Commands that are accepted by the [HTableServer].
+   * Internal commands that are accepted by the [HTableServer].
    */
-  sealed trait Command
+  private sealed trait Command
 
   /**
    * Internal message indicating that the gRPC service is up.
@@ -47,189 +40,153 @@ object HTableServer {
   private final case class ServiceDown(throwable: Throwable) extends Command
 
   /**
-   * Internal message indicating that the server was elected to be the leader.
+   * Internal message wrapper for ZooKeeper event.
    */
-  private final case object Elected extends Command
-
-  /**
-   * Internal message indicating that the server was overthrown.
-   */
-  private final case object Overthrown extends Command
-
-  /**
-   * Internal message sent when a new node has joined the cluster.
-   */
-  private final case class NodeJoined(data: ChildData) extends Command
-
-  /**
-   * Internal message sent when a node has left the cluster.
-   */
-  private final case class NodeLeft(data: ChildData) extends Command
-
-  /**
-   * Message sent to the actor to check if still alive.
-   */
-  final case class Ping(replyTo: ActorRef[Done]) extends Command
+  private final case class ZooKeeperEvent(event: ZooKeeperManager.Event) extends Command
 
   /**
    * Construct the main logic of the server.
-   */
-  def apply(zookeeper: CuratorFramework): Behavior[Command] =
-    Behaviors.setup(context => {
-      val server = new HTableServer(context, zookeeper)
-      server.init()
-    })
-}
-
-/**
- * Main implementation of a tablet server as described in the Google BigTable paper.
- *
- * @param context The actor context to run in.
- * @param zookeeper The client to communicate with the ZooKeeper cluster.
- */
-class HTableServer(private val context: ActorContext[HTableServer.Command], private val zookeeper: CuratorFramework) {
-  // Akka boot up code
-  implicit val sys: ActorSystem[Nothing] = context.system
-  implicit val classicSys: akka.actor.ActorSystem = context.system.toClassic
-  implicit val mat: Materializer = Materializer(context.system)
-  implicit val ec: ExecutionContext =
-    context.system.dispatchers.lookup(DispatcherSelector.default())
-
-  /**
-   * The unique identifier of the server.
-   */
-  private val uid = UUID.randomUUID().toString
-
-  /**
-   * The active tablets for this server.
-   */
-  private val tablets: util.TreeMap[TabletKey, ActorRef[TabletManager.Command]] = new util.TreeMap()
-
-  context.log.info("Booting HTable server")
-  context.log.info("Starting gRPC services")
-  context.pipeToSelf(createServices()) {
-    case Success(value) => HTableServer.ServiceUp(value)
-    case Failure(e)     => HTableServer.ServiceDown(e)
-  }
-
-  /**
-   * Construct the initial behavior of the server.
-   */
-  def init(): Behavior[HTableServer.Command] =
-    Behaviors
-      .receiveMessagePartial[HTableServer.Command] {
-        case HTableServer.ServiceUp(binding) =>
-          context.log.info(s"Listening to ${binding.localAddress}")
-          start(binding)
-        case HTableServer.ServiceDown(e) =>
-          context.log.error("Failed to start gRPC services", e)
-          Behaviors.same
-      }
-
-  /**
-   * Construct the behavior to start the server.
    *
-   * @param binding The server binding for the gRPC services.
+   * @param uid The unique identifier of the server.
+   * @param zk The ZooKeeper client.
    */
-  def start(binding: Http.ServerBinding): Behavior[HTableServer.Command] =
-    Behaviors.setup { _ =>
-      context.log.info("Joining ZooKeeper group")
+  def apply(uid: String, zk: CuratorFramework): Behavior[NodeManager.Command] =
+    Behaviors
+      .setup[AnyRef] { context =>
+        context.log.info("Booting HTable server")
 
-      // Perform leader election via ZooKeeper
-      val leaderLatch = new LeaderLatch(zookeeper, "/master", uid)
-      leaderLatch.addListener(
-        new LeaderLatchListener {
-          override def isLeader(): Unit = context.self ! HTableServer.Elected
-          override def notLeader(): Unit = context.self ! HTableServer.Overthrown
-        },
-        context.system.dispatchers.lookup(DispatcherSelector.blocking())
-      )
-      leaderLatch.start()
+        context.log.info("Starting gRPC services")
+        context.pipeToSelf(createServices(context)) {
+          case Success(value) => ServiceUp(value)
+          case Failure(e)     => ServiceDown(e)
+        }
 
-      // Create group membership
-      val membership =
-        new GroupMember(zookeeper, "/servers", uid, SerializationUtils.serialize(binding.localAddress))
-      membership.addListener(new GroupMemberListener {
-        override def memberJoined(data: ChildData): Unit = context.self ! HTableServer.NodeJoined(data)
-        override def memberLeft(data: ChildData): Unit = context.self ! HTableServer.NodeLeft(data)
-      })
-      membership.start()
+        Behaviors
+          .receiveMessagePartial[AnyRef] {
+            case ServiceUp(binding) =>
+              context.log.info(s"Listening to ${binding.localAddress}")
 
-      started(binding, leaderLatch, membership)
-    }
+              val node = Node(uid, binding.localAddress)
+              val adapter = context.messageAdapter(HTableServer.ZooKeeperEvent)
+              val zkRef = context.spawn(ZooKeeperManager(zk, node, adapter), name = "zookeeper")
+              context.watch(zkRef)
+
+              started(node, binding, zkRef)
+            case ServiceDown(e) => throw e
+          }
+      }
+      .narrow
 
   /**
    * Construct the behavior of the server when it has started.
    *
+   * @param self The self that has been spawned.
    * @param binding The server binding for the gRPC services.
-   * @param leaderLatch The latch for determining the master server.
-   * @param membership The [GroupMember] instance for keeping track of the tablet servers via ZooKeeper.
+   * @param zkRef The reference to the ZooKeeper actor.
    */
-  def started(binding: Http.ServerBinding,
-              leaderLatch: LeaderLatch,
-              membership: GroupMember): Behavior[HTableServer.Command] =
-    Behaviors
-      .receiveMessage[HTableServer.Command] {
-        case HTableServer.Elected =>
-          context.log.info("Node is elected for leader")
-          master(binding, leaderLatch, membership)
-        case HTableServer.NodeJoined(_) =>
-          context.log.info("Node has joined the cluster")
-          Behaviors.same
-        case HTableServer.NodeLeft(_) =>
-          context.log.info("Node has left the cluster")
-          Behaviors.same
-        case _ => throw new IllegalArgumentException()
-      }
-      .receiveSignal {
-        case (_, PostStop) =>
-          context.log.info("HugeTable server stopping")
-          binding.terminate(10.seconds)
-          leaderLatch.close()
-          membership.close()
-          Behaviors.same
-      }
+  def started(self: Node, binding: Http.ServerBinding, zkRef: ActorRef[ZooKeeperManager.Command]): Behavior[AnyRef] =
+    Behaviors.setup { context =>
+      val nodes = new mutable.HashSet[Node]()
+      val tablets = new util.TreeMap[Tablet, ActorRef[TabletManager.Command]]()
+
+      Behaviors
+        .receiveMessage[AnyRef] {
+          case ZooKeeperEvent(ZooKeeperManager.Elected) =>
+            context.log.info("Node has been elected")
+            master(self, nodes.toSet, binding, zkRef)
+          case ZooKeeperEvent(ZooKeeperManager.NodeJoined(node)) =>
+            context.log.info(s"Node ${node.uid} has joined")
+            nodes += node
+            Behaviors.same
+          case ZooKeeperEvent(ZooKeeperManager.NodeLeft(node)) =>
+            context.log.info(s"Node ${node.uid} has left")
+            nodes -= node
+            Behaviors.same
+          case NodeManager.Ping(replyTo) =>
+            replyTo ! NodeManager.Pong(self)
+            Behaviors.same
+          case _ => throw new IllegalArgumentException()
+        }
+        .receiveSignal {
+          case (_, Terminated(ref)) if ref == zkRef =>
+            throw new IllegalStateException("ZooKeeper actor has terminated")
+          case (_, PostStop) =>
+            context.log.info("HugeTable server stopping")
+            binding.terminate(10.seconds)
+            Behaviors.same
+        }
+    }
 
   /**
-   * Construct the behavior of the server when it has become the master.
+   * Construct the behavior of the server when it becomes the master.
    *
+   * @param self The self that has been spawned.
+   * @param nodes The active nodes in the cluster.
    * @param binding The server binding for the gRPC services.
-   * @param leaderLatch The latch for determining the master server.
-   * @param membership The [GroupMember] instance for keeping track of the tablet servers via ZooKeeper.
+   * @param zkRef The reference to the ZooKeeper actor.
    */
-  def master(binding: Http.ServerBinding,
-             leaderLatch: LeaderLatch,
-             membership: GroupMember): Behavior[HTableServer.Command] =
-    Behaviors
-      .receiveMessage[HTableServer.Command] {
-        case HTableServer.Overthrown =>
-          context.log.info("Node was overthrown")
-          Behaviors.stopped // Kill the server when the node is overthrown
-        case HTableServer.NodeJoined(_) =>
-          context.log.info("Node has joined the cluster")
-          Behaviors.same
-        case HTableServer.NodeLeft(_) =>
-          context.log.info("Node has left the cluster")
-          Behaviors.same
-        case _ => throw new IllegalArgumentException()
+  def master(self: Node,
+             nodes: Set[Node],
+             binding: Http.ServerBinding,
+             zkRef: ActorRef[ZooKeeperManager.Command]): Behavior[AnyRef] =
+    Behaviors.setup { context =>
+      // Spawn actors for the active nodes
+      val nodeRefs = mutable.HashMap[Node, ActorRef[NodeManager.Command]]((self, context.self))
+      for (node <- nodes if node != self) {
+        nodeRefs(node) = context.spawn(NodeManager(node), name = s"node-${node.uid}")
       }
-      .receiveSignal {
-        case (_, PostStop) =>
-          context.log.info("HugeTable server stopping")
 
-          binding.terminate(10.seconds)
-          leaderLatch.close()
-          membership.close()
-          Behaviors.same
-      }
+      // Spawn the load balancer
+      val loadBalancer = context.spawn(LoadBalancer(nodeRefs.toMap), name = "load-balancer")
+
+      Behaviors
+        .receiveMessage[AnyRef] {
+          case ZooKeeperEvent(ZooKeeperManager.Overthrown) =>
+            context.log.info("Node has been overthrown")
+            Behaviors.stopped
+          case ZooKeeperEvent(ZooKeeperManager.NodeJoined(node)) =>
+            context.log.info(s"Node ${node.uid} has joined")
+            nodeRefs(node) = context.spawn(NodeManager(node), name = s"node-${node.uid}")
+            Behaviors.same
+          case ZooKeeperEvent(ZooKeeperManager.NodeLeft(node)) =>
+            context.log.info(s"Node ${node.uid} has left")
+
+            // Kill node manager and remove from map
+            nodeRefs.remove(node) match {
+              case Some(nodeRef) => context.stop(nodeRef)
+              case _ =>
+            }
+
+            Behaviors.same
+          case NodeManager.Ping(replyTo) =>
+            replyTo ! NodeManager.Pong(self)
+            Behaviors.same
+          case _ => throw new IllegalArgumentException()
+        }
+        .receiveSignal {
+          case (_, Terminated(ref)) if ref == zkRef =>
+            throw new IllegalStateException("ZooKeeper actor has terminated")
+          case (_, PostStop) =>
+            context.log.info("HugeTable server stopping")
+            binding.terminate(10.seconds)
+            Behaviors.same
+        }
+    }
 
   /**
    * Create the gRPC services.
    */
-  private def createServices(): Future[Http.ServerBinding] = {
-    val client = ClientServiceHandler.partial(ClientServiceImpl)
-    val admin = AdminServiceHandler.partial(AdminServiceImpl)
-    val internal = InternalServiceHandler.partial(InternalServiceImpl)
+  private def createServices(context: ActorContext[_]): Future[Http.ServerBinding] = {
+    // Akka boot up code
+    implicit val sys: ActorSystem[Nothing] = context.system
+    implicit val classicSys: akka.actor.ActorSystem = context.system.toClassic
+    implicit val mat: Materializer = Materializer(context.system)
+    implicit val ec: ExecutionContext =
+      context.system.dispatchers.lookup(DispatcherSelector.default())
+
+    val client = ClientServiceHandler.partial(new ClientServiceImpl)
+    val admin = AdminServiceHandler.partial(new AdminServiceImpl)
+    val internal = InternalServiceHandler.partial(new InternalServiceImpl)
 
     // Create service handlers
     val service: HttpRequest => Future[HttpResponse] =
@@ -244,13 +201,12 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
     )
   }
 
-  private object ClientServiceImpl extends ClientService {
+  private class ClientServiceImpl(implicit val mat: Materializer) extends ClientService {
 
     /**
      * Read the specified row (range) and stream back the response.
      */
     override def read(in: ReadRequest): Source[ReadResponse, NotUsed] = {
-      context.log.info("Received READ request")
       Source.single(ReadResponse())
     }
 
@@ -258,12 +214,11 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
      * Mutate a specified row in a table.
      */
     override def mutate(in: MutateRequest): Future[MutateResponse] = {
-      context.log.info("Received MUTATE request")
       Future.successful(MutateResponse())
     }
   }
 
-  private object AdminServiceImpl extends AdminService {
+  private class AdminServiceImpl(implicit val mat: Materializer) extends AdminService {
 
     /**
      * Create a new table in the cluster.
@@ -276,15 +231,21 @@ class HTableServer(private val context: ActorContext[HTableServer.Command], priv
     override def deleteTable(in: DeleteTableRequest): Future[DeleteTableResponse] = ???
   }
 
-  private object InternalServiceImpl extends InternalService {
-    // Asking someone requires a timeout
-    implicit val timeout: Timeout = 3.seconds
+  private class InternalServiceImpl(implicit mat: Materializer) extends InternalService {
 
     /**
-     * Ping a node in the cluster.
+     * Ping a self in the cluster.
      */
-    override def ping(in: PingRequest): Future[PingResponse] =
-      context.self.ask(HTableServer.Ping)
-      .map(_ => PingResponse())
+    override def ping(in: PingRequest): Future[PingResponse] = ???
+
+    /**
+     * Query a self for the tablets it's serving.
+     */
+    override def query(in: QueryRequest): Future[QueryResponse] = ???
+
+    /**
+     * Assign the specified tablets to the self.
+     */
+    override def assign(in: AssignRequest): Future[AssignResponse] = ???
   }
 }
