@@ -5,7 +5,7 @@ import akka.actor.typed.{ActorRef, Behavior}
 import akka.stream.Materializer
 import akka.stream.typed.scaladsl.ActorSink
 import akka.util.{ByteString, Timeout}
-import nl.tudelft.htable.core.{Node, Query, Row, Tablet}
+import nl.tudelft.htable.core.{Node, Row, RowRange, Scan, Tablet}
 
 import scala.collection.mutable
 import scala.concurrent.duration._
@@ -120,7 +120,7 @@ object LoadBalancer {
      * Query the specified [Node] for the metadata table.
      */
     def query(node: Node): Unit = {
-      context.ask(nodes(node), (ref: ActorRef[NodeManager.ReadResponse]) => NodeManager.Read(Query("METADATA"), ref)) {
+      context.ask(nodes(node), (ref: ActorRef[NodeManager.ReadResponse]) => NodeManager.Read(Scan("METADATA", RowRange(ByteString.empty, ByteString.empty)), ref)) {
         case Success(event) => NodeEvent(node, event)
         case Failure(e)     => NodeFailure(node, e)
       }

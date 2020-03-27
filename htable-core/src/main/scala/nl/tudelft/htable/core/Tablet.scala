@@ -1,5 +1,7 @@
 package nl.tudelft.htable.core
 
+import java.util.Comparator
+
 import akka.util.ByteString
 
 /**
@@ -16,7 +18,25 @@ object Tablet {
    */
   private val ordering: Ordering[Tablet] = Ordering
     .by[Tablet, String](_.table)
-    .orElseBy(_.startKey.toByteBuffer)
+    .orElse(Ordering.comparatorToOrdering(new Comparator[Tablet] {
+      def compare(l: Tablet, r: Tablet): Int = {
+
+        var result = l.startKey.toByteBuffer.compareTo(r.startKey.toByteBuffer)
+        if (result != 0) {
+          return result
+        }
+
+        result = r.endKey.toByteBuffer.compareTo(r.endKey.toByteBuffer)
+
+        if (l.startKey.nonEmpty && l.endKey.isEmpty) {
+          1 // This is the last region
+        } else if (r.startKey.nonEmpty && r.endKey.isEmpty) {
+          -1 // r is the last region
+        } else {
+          result
+        }
+      }
+    }))
 
   /**
    * Obtain the root METADATA tablet.

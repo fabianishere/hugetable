@@ -3,15 +3,6 @@ syntax = "proto3";
 option java_multiple_files = true;
 option java_package = "nl.tudelft.htable.protocol.client";
 
-// A non-contiguous set of rows.
-message RowSet {
-    // Single rows included in the set.
-    repeated bytes row_keys = 1;
-
-    // Contiguous row ranges included in the set.
-    repeated RowRange row_ranges = 2;
-}
-
 // A contiguous range of rows.
 message RowRange {
     // The row key at which to start the range (inclusive).
@@ -77,10 +68,13 @@ message ReadRequest {
     string table_name = 1;
 
     // The (range of) row keys to read from.
-    RowSet rows = 2;
+    oneof rows {
+        // Single row included in the set.
+        bytes row_key = 2;
 
-    // The maximum number of rows to read.
-    int64 rows_limit = 3;
+        // Contiguous row range included in the set.
+        RowRange row_range = 3;
+    }
 }
 
 // Response message for ClientService.Read.

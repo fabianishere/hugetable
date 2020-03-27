@@ -4,14 +4,15 @@ import akka.actor.ActorSystem
 import akka.stream.Materializer
 import akka.util.ByteString
 import nl.tudelft.htable.client.HTableClient
-import nl.tudelft.htable.core.Query
+import nl.tudelft.htable.core.{Get, Query, RowCell, RowMutation, RowRange, Scan}
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.rogach.scallop.{ScallopConf, ScallopOption}
 
 import scala.collection.Seq
-import scala.concurrent.ExecutionContextExecutor
-import scala.util.Properties
+import scala.concurrent.duration._
+import scala.concurrent.{Await, ExecutionContextExecutor}
+import scala.util.{Failure, Properties, Success}
 
 /**
  * Main class of the HugeTable server program.
@@ -39,10 +40,19 @@ object Main {
 
     val client = HTableClient(zookeeper)
     client
-      .read(Query("metadata").withRow(ByteString("test")))
+      .read(Get("METADATA", ByteString("test")))
       .log("error logging")
       .runForeach(e => println(e))
-      .onComplete(_ => client.close())
+      .onComplete {
+        case Success(value) =>
+          println(value)
+          client.close()
+          sys.terminate()
+        case Failure(exception) =>
+          exception.printStackTrace()
+          client.close()
+          sys.terminate()
+      }
   }
 
   /**
