@@ -9,7 +9,7 @@ import akka.util.ByteString
 import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol.client.Mutation.{DeleteFromColumn, DeleteFromRow, SetCell}
-import nl.tudelft.htable.protocol.client.{MutateRequest, ReadRequest, ReadResponse, RowSet, RowRange => PBRowRange}
+import nl.tudelft.htable.protocol.client.{MutateRequest, ReadRequest, ReadResponse, RowRange => PBRowRange, Mutation => PBMutation}
 import nl.tudelft.htable.protocol.internal.{Tablet => PBTablet}
 
 import scala.language.implicitConversions
@@ -43,47 +43,59 @@ private[htable] object SerializationUtils {
    * Convert the specified [Query] to a [ReadRequest].
    */
   def toReadRequest(query: Query): ReadRequest = {
-    val rowSet = RowSet(
-      rowKeys = query.rowKeys.reverse.map(buf => buf),
-      rowRanges = query.ranges.reverse.map(range => PBRowRange(startKey = range.start, endKey = range.end))
-    )
-    ReadRequest(
-      tableName = query.table,
-      rows = Some(rowSet),
-      rowsLimit = query.limit
-    )
+    query match  {
+      case Get(table, key) => ReadRequest(table, rows = ReadRequest.Rows.RowKey(key))
+      case Scan(table, range) => ReadRequest(table, rows = ReadRequest.Rows.RowRange(PBRowRange(range.start, range.end)))
+    }
   }
 
   /**
    * Convert the specified [ReadRequest] to a [Query].
    */
   def toQuery(request: ReadRequest): Query = {
-    val query = Query(request.tableName)
-      .limit(request.rowsLimit)
-
     request.rows match {
-      case Some(value) =>
-        query.copy(
-          rowKeys = value.rowKeys.map(s => protobufToAkka(s)).toList,
-          ranges = value.rowRanges.map(range => RowRange(start = range.startKey, end = range.endKey)).toList
-        )
-      case None => query
+      case ReadRequest.Rows.RowKey(key) => Get(request.tableName, key)
+      case ReadRequest.Rows.RowRange(PBRowRange(start, end, _)) => Scan(request.tableName, RowRange(start, end))
+      case ReadRequest.Rows.Empty =>  throw new IllegalArgumentException("Empty query")
     }
   }
 
 
   /**
-   * Convert the specified [RowMutation] to a [MutateReq
+   * Convert the specified [RowMutation] to a [MutateRequest].
    */
   def toMutateRequest(mutation: RowMutation): MutateRequest = {
-    MutateRequest(tableName = mutation.table, rowKey = mutation.key, mutations = mutation.mutations.reverse.map {
+    val mutations: List[PBMutation] = mutation.mutations.reverse.map {
       case Mutation.AppendCell(cell) =>
-        SetCell(cell.qualifier, cell.value).asInstanceOf[nl.tudelft.htable.protocol.client.Mutation]
+        PBMutation.Mutation.SetCell(SetCell(cell.qualifier, cell.value))
       case Mutation.DeleteCell(cell) =>
-        DeleteFromColumn(cell.qualifier).asInstanceOf[nl.tudelft.htable.protocol.client.Mutation]
+        PBMutation.Mutation.DeleteFromColumn(DeleteFromColumn(cell.qualifier))
       case Mutation.Delete =>
-        DeleteFromRow().asInstanceOf[nl.tudelft.htable.protocol.client.Mutation]
-    })
+        PBMutation.Mutation.DeleteFromRow(DeleteFromRow())
+    }.map[PBMutation](mut => PBMutation(mut))
+    MutateRequest(tableName = mutation.table, rowKey = mutation.key, mutations)
+  }
+
+  /**
+   * Convert a [MutateRequest] to [RowMutation]
+   */
+  def toRowMutation(mutateRequest: MutateRequest): RowMutation = {
+    val mutations = mutateRequest.mutations.flatMap[Mutation] { mutation =>
+      if (mutation.mutation.isSetCell) {
+        val cell = mutation.mutation.setCell.head
+        Some(Mutation.AppendCell(RowCell(cell.qualifier, 0, cell.value)))
+      } else if (mutation.mutation.isDeleteFromColumn) {
+        val cell = mutation.mutation.deleteFromColumn.head
+        Some(Mutation.DeleteCell(RowCell(cell.qualifier, 0, ByteString())))
+      } else if (mutation.mutation.isDeleteFromRow) {
+        Some(Mutation.Delete)
+      } else {
+        None
+      }
+    }
+
+    RowMutation(mutateRequest.tableName, mutateRequest.rowKey)
+      .copy(mutations = mutations.toList)
   }
 
   /**
@@ -110,7 +122,7 @@ private[htable] object SerializationUtils {
   }
 
   /**
-   *
+   * Convert a [Cell] to a Protobuf cell.
    */
   def toPBCell(row: Row, cell: RowCell): ReadResponse.RowCell = ReadResponse.RowCell(rowKey = row.key, cell.qualifier, cell.timestamp, cell.value)
 

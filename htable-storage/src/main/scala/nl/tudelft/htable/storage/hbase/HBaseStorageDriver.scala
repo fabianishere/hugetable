@@ -1,10 +1,11 @@
 package nl.tudelft.htable.storage.hbase
 
+import akka.util.ByteString
 import nl.tudelft.htable.core.Tablet
 import nl.tudelft.htable.storage.{StorageDriver, TabletDriver}
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hbase.client.{ColumnFamilyDescriptorBuilder, RegionInfoBuilder, TableDescriptorBuilder}
-import org.apache.hadoop.hbase.regionserver.HRegion
+import org.apache.hadoop.hbase.regionserver.{HRegion, MemStoreLAB}
 import org.apache.hadoop.hbase.wal.WALFactory
 import org.apache.hadoop.hbase.{HConstants, TableName}
 
@@ -12,6 +13,9 @@ import org.apache.hadoop.hbase.{HConstants, TableName}
  * A [StorageDriver] that uses HBase.
  */
 class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
+  import org.apache.hadoop.hbase.regionserver.ChunkCreator
+
+  ChunkCreator.initialize(MemStoreLAB.CHUNK_SIZE_DEFAULT, false, 0, 0, 0, null)
 
   override def openTablet(tablet: Tablet): TabletDriver = {
     val tableName = TableName.valueOf(tablet.table)

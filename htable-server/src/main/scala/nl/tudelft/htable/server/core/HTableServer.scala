@@ -11,14 +11,15 @@ import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
-import akka.util.Timeout
-import nl.tudelft.htable.core.{Node, Tablet}
+import akka.util.{ByteString, Timeout}
+import nl.tudelft.htable.core.{Get, Node, Row, Scan, Tablet}
 import nl.tudelft.htable.protocol.SerializationUtils
 import nl.tudelft.htable.protocol.SerializationUtils._
 import nl.tudelft.htable.protocol.admin._
 import nl.tudelft.htable.protocol.client._
 import nl.tudelft.htable.protocol.internal._
 import nl.tudelft.htable.server.core.util.AkkaServiceHandler
+import nl.tudelft.htable.storage.StorageDriver
 import org.apache.curator.framework.CuratorFramework
 
 import scala.collection.mutable
@@ -54,8 +55,9 @@ object HTableServer {
    *
    * @param uid The unique identifier of the server.
    * @param zk The ZooKeeper client.
+   * @param storageDriver The storage driver to use.
    */
-  def apply(uid: String, zk: CuratorFramework): Behavior[NodeManager.Command] =
+  def apply(uid: String, zk: CuratorFramework, storageDriver: StorageDriver): Behavior[NodeManager.Command] =
     Behaviors
       .setup[AnyRef] { context =>
         context.log.info("Booting HTable server")
@@ -76,7 +78,7 @@ object HTableServer {
               val zkRef = context.spawn(ZooKeeperManager(zk, node, adapter), name = "zookeeper")
               context.watch(zkRef)
 
-              started(node, binding, zkRef)
+              started(node, binding, zkRef, storageDriver)
             case ServiceDown(e) => throw e
           }
       }
@@ -87,19 +89,23 @@ object HTableServer {
    *
    * @param self The self that has been spawned.
    * @param binding The server binding for the gRPC services.
-   * @param zkRef The reference to the ZooKeeper actor.
+   * @param zkRef   The reference to the ZooKeeper actor.
+   * @param storageDriver The storage driver to use.
    */
-  def started(self: Node, binding: Http.ServerBinding, zkRef: ActorRef[ZooKeeperManager.Command]): Behavior[AnyRef] =
+  def started(self: Node,
+              binding: Http.ServerBinding,
+              zkRef: ActorRef[ZooKeeperManager.Command],
+              storageDriver: StorageDriver): Behavior[AnyRef] =
     Behaviors.setup { context =>
       val nodes = new mutable.HashSet[Node]()
-      val tablets = new util.TreeMap[Tablet, ActorRef[TabletManager.Command]]()
+      val tablets = new util.TreeMap[Tablet, ActorRef[NodeManager.Command]]()
       var root: Option[Node] = None
 
       Behaviors
         .receiveMessage[AnyRef] {
           case ZooKeeperEvent(ZooKeeperManager.Elected) =>
             context.log.info("Node has been elected")
-            master(self, nodes.toSet, root, tablets, binding, zkRef)
+            master(self, nodes.toSet, root, tablets, binding, zkRef, storageDriver)
           case ZooKeeperEvent(ZooKeeperManager.NodeJoined(node)) =>
             context.log.info(s"Node ${node.uid} has joined")
             nodes += node
@@ -133,12 +139,37 @@ object HTableServer {
               if (Tablet.isRoot(tablet)) {
                 zkRef ! ZooKeeperManager.ClaimRoot
               }
-              tablets.put(tablet, context.spawnAnonymous(TabletManager()))
+              tablets.put(tablet, context.spawnAnonymous(TabletManager(storageDriver, tablet)))
             }
 
             Behaviors.same
-          case NodeManager.Read(_, replyTo) =>
-            replyTo ! NodeManager.ReadResponse(Source.empty)
+          case NodeManager.Read(query, replyTo) =>
+            query match {
+              case Get(table, key) =>
+                Option(tablets.floorEntry(Tablet(table, key, ByteString.empty))) match {
+                  case Some(entry) => entry.getValue ! NodeManager.Read(query, replyTo)
+                  case None =>
+                }
+              case Scan(table, range) =>
+                implicit val timeout: Timeout = 3.seconds
+                implicit val sys: ActorSystem[Nothing] = context.system
+
+                val start = Tablet(table, range.start, range.end)
+                val end = Tablet(table, range.end, ByteString.empty)
+
+                val source: Source[Row, NotUsed] = Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
+                  .map(entry =>  entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range), _)))
+                  .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
+                  .flatMapConcat(_.rows)
+
+                replyTo ! NodeManager.ReadResponse(source)
+            }
+            Behaviors.same
+          case NodeManager.Mutate(mutation, replyTo) =>
+            Option(tablets.floorEntry(Tablet(mutation.table, mutation.key, ByteString.empty))) match {
+              case Some(entry) => entry.getValue ! NodeManager.Mutate(mutation, replyTo)
+              case None =>
+            }
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }
@@ -160,13 +191,15 @@ object HTableServer {
    * @param tablets The tablets assigned to this server.
    * @param binding The server binding for the gRPC services.
    * @param zkRef The reference to the ZooKeeper actor.
+   * @param storageDriver The storage driver to use.
    */
   def master(self: Node,
              nodes: Set[Node],
              oldRoot: Option[Node],
-             tablets: util.TreeMap[Tablet, ActorRef[TabletManager.Command]],
+             tablets: util.TreeMap[Tablet, ActorRef[NodeManager.Command]],
              binding: Http.ServerBinding,
-             zkRef: ActorRef[ZooKeeperManager.Command]): Behavior[AnyRef] =
+             zkRef: ActorRef[ZooKeeperManager.Command],
+             storageDriver: StorageDriver): Behavior[AnyRef] =
     Behaviors.setup { context =>
       var root = oldRoot
 
@@ -231,12 +264,37 @@ object HTableServer {
               if (Tablet.isRoot(tablet)) {
                 zkRef ! ZooKeeperManager.ClaimRoot
               }
-              tablets.put(tablet, context.spawnAnonymous(TabletManager()))
+              tablets.put(tablet, context.spawnAnonymous(TabletManager(storageDriver, tablet)))
             }
 
             Behaviors.same
-          case NodeManager.Read(_, replyTo) =>
-            replyTo ! NodeManager.ReadResponse(Source.empty)
+          case NodeManager.Read(query, replyTo) =>
+            query match {
+              case Get(table, key) =>
+                Option(tablets.floorEntry(Tablet(table, key, ByteString.empty))) match {
+                  case Some(entry) => entry.getValue ! NodeManager.Read(query, replyTo)
+                  case None =>
+                }
+              case Scan(table, range) =>
+                implicit val timeout: Timeout = 3.seconds
+                implicit val sys: ActorSystem[Nothing] = context.system
+
+                val start = Tablet(table, range.start, range.end)
+                val end = Tablet(table, range.end, ByteString.empty)
+
+                val source: Source[Row, NotUsed] = Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
+                  .map(entry =>  entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range), _)))
+                  .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
+                  .flatMapConcat(_.rows)
+
+                replyTo ! NodeManager.ReadResponse(source)
+            }
+            Behaviors.same
+          case NodeManager.Mutate(mutation, replyTo) =>
+            Option(tablets.floorEntry(Tablet(mutation.table, mutation.key, ByteString.empty))) match {
+              case Some(entry) => entry.getValue ! NodeManager.Mutate(mutation, replyTo)
+              case None =>
+            }
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }
@@ -281,6 +339,8 @@ object HTableServer {
   private class ClientServiceImpl(self: ActorRef[NodeManager.Command])(implicit val sys: ActorSystem[Nothing])
       extends ClientService {
     implicit val timeout: Timeout = 3.seconds
+    implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
+
 
     /**
      * Read the specified row (range) and stream back the response.
@@ -296,7 +356,9 @@ object HTableServer {
      * Mutate a specified row in a table.
      */
     override def mutate(in: MutateRequest): Future[MutateResponse] = {
-      Future.successful(MutateResponse())
+      self
+        .ask[NodeManager.MutateResponse.type](NodeManager.Mutate(SerializationUtils.toRowMutation(in), _))
+        .map(_ => MutateResponse())
     }
   }
 

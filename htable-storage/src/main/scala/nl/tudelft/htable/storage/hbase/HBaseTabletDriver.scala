@@ -1,15 +1,17 @@
 package nl.tudelft.htable.storage.hbase
 
+import java.util
+
 import akka.NotUsed
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
+import nl.tudelft.htable.core
 import org.apache.hadoop.hbase.client.{Append, Delete, Get, Result, Scan}
 import nl.tudelft.htable.core.{Mutation, Query, Row, RowCell, RowMutation, Tablet}
 import nl.tudelft.htable.storage.TabletDriver
 import org.apache.hadoop.hbase.{Cell, CellBuilderFactory, CellBuilderType}
-import org.apache.hadoop.hbase.regionserver.{HRegion, RegionScanner}
+import org.apache.hadoop.hbase.regionserver.{HRegion, MultiVersionConcurrencyControl, RegionScanner}
 
-import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters._
 
 /**
@@ -37,6 +39,9 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
     }
 
     region.append(append)
+
+    // Force flush for now to prevent data loss
+    region.flush(true)
   }
 
   /**
@@ -44,34 +49,42 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
    */
   override def read(query: Query): Source[Row, NotUsed] = {
     Source.fromIterator[Row] { () =>
-      val gets = query.rowKeys
-        .map(key => new Get(key.toArray))
-        .map(get => region.get(get))
-        .map(
-          res =>
-            Row(
-              ByteString(res.getRow),
-              res.listCells().asScala.map(fromHBase).toSeq
-          ))
+      query match {
+        case core.Get(_, key) =>
+          val result = region.get(new Get(key.toArray))
+          if (result.getExists)
+            Iterator(Row(ByteString(result.getRow), result.listCells().asScala.map(fromHBase).toSeq))
+          else
+            Iterator()
+        case core.Scan(_, range) =>
+          val scan = new Scan()
+            .withStartRow(range.start.toArray, true)
+            .withStopRow(range.end.toArray, true)
+            .addFamily("hregion".getBytes("UTF-8"))
+          val scanner = region.getScanner(scan).asInstanceOf[RegionScanner]
 
-      query.ranges
-        .map(range => new Scan().withStartRow(range.start.toArray).withStopRow(range.end.toArray))
-        .map(scan => region.getScanner(scan).asInstanceOf[RegionScanner])
-        .map[Iterator[Row]](scanner =>
-          new Iterator[Row] {
-            var done = false
+          new Iterator[Option[Row]] {
+            var more = true
 
-            override def hasNext: Boolean = done
+            override def hasNext: Boolean = more
 
-            override def next(): Row = {
-              val cells = ListBuffer[Cell]()
-              done = scanner.nextRaw(cells.asJava)
-              val rowKey = ByteString(cells.head.getRowArray)
-              val rowCells = cells.map(fromHBase).toSeq
-              Row(rowKey, rowCells)
+            override def next(): Option[Row] = {
+              val cells = new util.ArrayList[Cell]()
+              region.startRegionOperation();
+              try {
+                more = scanner.nextRaw(cells)
+              } finally {
+                region.closeRegionOperation()
+              }
+              val scalaCells = cells.asScala
+              scalaCells.headOption.map { value =>
+                val rowKey = ByteString(value.getRowArray)
+                val rowCells = scalaCells.map(fromHBase).toSeq
+                Row(rowKey, rowCells)
+              }
             }
-        })
-        .foldLeft(gets.iterator)(_ ++ _)
+          }.flatten
+      }
     }
   }
 
