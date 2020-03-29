@@ -120,7 +120,9 @@ object LoadBalancer {
      * Query the specified [Node] for the metadata table.
      */
     def query(node: Node): Unit = {
-      context.ask(nodes(node), (ref: ActorRef[NodeManager.ReadResponse]) => NodeManager.Read(Scan("METADATA", RowRange(ByteString.empty, ByteString.empty)), ref)) {
+      context.ask(nodes(node),
+                  (ref: ActorRef[NodeManager.ReadResponse]) =>
+                    NodeManager.Read(Scan("METADATA", RowRange(ByteString.empty, ByteString.empty)), ref)) {
         case Success(event) => NodeEvent(node, event)
         case Failure(e)     => NodeFailure(node, e)
       }
@@ -148,7 +150,7 @@ object LoadBalancer {
       case NodeRow(_, row) =>
         val table = row.cells.find(_.qualifier == ByteString("table")).head.value.utf8String
         val startKey = row.cells.find(_.qualifier == ByteString("start-key")).head.value
-        val tablet = Tablet(table, startKey, ByteString())
+        val tablet = Tablet(table, RowRange.leftBounded(startKey))
 
         allTablets += tablet
         Behaviors.same

@@ -9,6 +9,7 @@ import nl.tudelft.htable.storage.StorageDriver
  * A tablet manager manages the requests of a single tablet.
  */
 object TabletManager {
+
   /**
    * Construct the behavior for the tablet manager.
    */

@@ -3,9 +3,9 @@ package nl.tudelft.htable.core
 /**
  * A mutation within a single row.
  */
-private[htable] sealed trait Mutation
+sealed trait Mutation
 
-private[htable] object Mutation {
+object Mutation {
 
   /**
    * Append a cell to the row.

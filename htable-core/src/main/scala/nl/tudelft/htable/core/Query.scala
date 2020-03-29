@@ -7,7 +7,7 @@ import akka.util.ByteString
  *
  * @param table The name of the table to query.
  */
-sealed abstract class Query (val table: String)
+sealed abstract class Query(val table: String)
 
 /**
  * A query to obtain a single row.

@@ -6,11 +6,11 @@ import akka.NotUsed
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import nl.tudelft.htable.core
-import org.apache.hadoop.hbase.client.{Append, Delete, Get, Result, Scan}
-import nl.tudelft.htable.core.{Mutation, Query, Row, RowCell, RowMutation, Tablet}
+import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
+import org.apache.hadoop.hbase.client.{Append, Get, Scan}
+import org.apache.hadoop.hbase.regionserver.{HRegion, RegionScanner}
 import org.apache.hadoop.hbase.{Cell, CellBuilderFactory, CellBuilderType}
-import org.apache.hadoop.hbase.regionserver.{HRegion, MultiVersionConcurrencyControl, RegionScanner}
 
 import scala.jdk.CollectionConverters._
 
@@ -98,7 +98,6 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
     res.setFamily("hregion".getBytes("UTF-8"))
     res.setType(cellType)
     res.setRow(row.toArray)
-    res.setTimestamp(System.currentTimeMillis())
     res.setQualifier(cell.qualifier.toArray)
     res.setValue(cell.value.toArray)
 

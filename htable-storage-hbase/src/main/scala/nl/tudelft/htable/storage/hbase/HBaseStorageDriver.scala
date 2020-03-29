@@ -1,6 +1,5 @@
 package nl.tudelft.htable.storage.hbase
 
-import akka.util.ByteString
 import nl.tudelft.htable.core.Tablet
 import nl.tudelft.htable.storage.{StorageDriver, TabletDriver}
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -35,8 +34,8 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
     val info = RegionInfoBuilder
       .newBuilder(tableName)
       .setRegionId(1)
-      .setStartKey(tablet.startKey.toArray)
-      .setEndKey(tablet.endKey.toArray)
+      .setStartKey(tablet.range.start.toArray)
+      .setEndKey(tablet.range.end.toArray)
       .build
 
     val WAL = factory.getWAL(info)
@@ -62,8 +61,8 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
     val info = RegionInfoBuilder
       .newBuilder(tableName)
       .setRegionId(1)
-      .setStartKey(tablet.startKey.toArray)
-      .setEndKey(tablet.endKey.toArray)
+      .setStartKey(tablet.range.start.toArray)
+      .setEndKey(tablet.range.end.toArray)
       .build
 
     val WAL = factory.getWAL(info)

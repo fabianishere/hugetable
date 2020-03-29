@@ -67,9 +67,9 @@ private[htable] object SerializationUtils {
   def toMutateRequest(mutation: RowMutation): MutateRequest = {
     val mutations: List[PBMutation] = mutation.mutations.reverse.map {
       case Mutation.AppendCell(cell) =>
-        PBMutation.Mutation.SetCell(SetCell(cell.qualifier, cell.value))
+        PBMutation.Mutation.SetCell(SetCell(cell.qualifier, cell.timestamp, cell.value))
       case Mutation.DeleteCell(cell) =>
-        PBMutation.Mutation.DeleteFromColumn(DeleteFromColumn(cell.qualifier))
+        PBMutation.Mutation.DeleteFromColumn(DeleteFromColumn(cell.qualifier, cell.timestamp))
       case Mutation.Delete =>
         PBMutation.Mutation.DeleteFromRow(DeleteFromRow())
     }.map[PBMutation](mut => PBMutation(mut))
@@ -83,10 +83,10 @@ private[htable] object SerializationUtils {
     val mutations = mutateRequest.mutations.flatMap[Mutation] { mutation =>
       if (mutation.mutation.isSetCell) {
         val cell = mutation.mutation.setCell.head
-        Some(Mutation.AppendCell(RowCell(cell.qualifier, 0, cell.value)))
+        Some(Mutation.AppendCell(RowCell(cell.qualifier, cell.timestamp, cell.value)))
       } else if (mutation.mutation.isDeleteFromColumn) {
         val cell = mutation.mutation.deleteFromColumn.head
-        Some(Mutation.DeleteCell(RowCell(cell.qualifier, 0, ByteString())))
+        Some(Mutation.DeleteCell(RowCell(cell.qualifier, cell.timestamp, ByteString())))
       } else if (mutation.mutation.isDeleteFromRow) {
         Some(Mutation.Delete)
       } else {
@@ -130,13 +130,13 @@ private[htable] object SerializationUtils {
    * Translate a core [Tablet] to Protobuf [Tablet].
    */
   implicit def coreToProtobuf(tablet: Tablet): PBTablet =
-    PBTablet(tableName = tablet.table, startKey = tablet.startKey, endKey = tablet.endKey)
+    PBTablet(tableName = tablet.table, startKey = tablet.range.start, endKey = tablet.range.end)
 
   /**
    * Translate a core [Tablet] to Protobuf [Tablet].
    */
   implicit def protobufToCore(tablet: PBTablet): Tablet =
-    Tablet(tablet.tableName, tablet.startKey, tablet.endKey)
+    Tablet(tablet.tableName, RowRange(tablet.startKey, tablet.endKey))
 
   /**
    * Translate an Akka byte string into a Google Protobuf byte string.

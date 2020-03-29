@@ -4,14 +4,13 @@ import akka.actor.ActorSystem
 import akka.stream.Materializer
 import akka.util.ByteString
 import nl.tudelft.htable.client.HTableClient
-import nl.tudelft.htable.core.{Get, Query, RowCell, RowMutation, RowRange, Scan}
+import nl.tudelft.htable.core.{RowCell, RowMutation, RowRange, Scan}
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.rogach.scallop.{ScallopConf, ScallopOption}
 
 import scala.collection.Seq
-import scala.concurrent.duration._
-import scala.concurrent.{Await, ExecutionContextExecutor}
+import scala.concurrent.ExecutionContextExecutor
 import scala.util.{Failure, Properties, Success}
 
 /**
@@ -39,8 +38,13 @@ object Main {
     implicit val ec: ExecutionContextExecutor = sys.dispatcher
 
     val client = HTableClient(zookeeper)
+
+    client.mutate(
+      RowMutation("METADATA", ByteString("test"))
+        .append(RowCell(ByteString("test"), System.currentTimeMillis(), ByteString("hi"))))
+
     client
-      .read(Get("METADATA", ByteString("test")))
+      .read(Scan("METADATA", RowRange.unbounded))
       .log("error logging")
       .runForeach(e => println(e))
       .onComplete {

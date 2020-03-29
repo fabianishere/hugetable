@@ -14,15 +14,6 @@ message RowRange {
     bytes end_key = 2;
 }
 
-// A contiguous range of microsecond timestamps.
-message TimestampRange {
-    // Inclusive lower bound. If left empty, interpreted as 0.
-    int64 start_timestamp_micros = 1;
-
-    // Exclusive upper bound. If left empty, interpreted as infinity.
-    int64 end_timestamp_micros = 2;
-}
-
 // A particular change to be made to the contents of a row.
 message Mutation {
     // A Mutation which sets the value of the specified cell.
@@ -31,8 +22,11 @@ message Mutation {
         // Can be any byte string, including the empty string.
         bytes qualifier = 1;
 
+        // The timestamp of the cell in milliseconds.
+        int64 timestamp = 2;
+
         // The value to be written into the specified cell.
-        bytes value = 2;
+        bytes value = 3;
     }
 
     // A Mutation which deletes cells from the specified column, optionally
@@ -42,8 +36,8 @@ message Mutation {
         // Can be any byte string, including the empty string.
         bytes qualifier = 1;
 
-        // The range of timestamps within which cells should be deleted.
-        TimestampRange time_range = 2;
+        // The timestamp of the cell in milliseconds.
+        int64 timestamp = 2;
     }
 
     // A Mutation which deletes all cells from the containing row.

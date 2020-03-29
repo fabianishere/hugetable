@@ -11,13 +11,36 @@ import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
-import akka.util.{ByteString, Timeout}
-import nl.tudelft.htable.core.{Get, Node, Row, Scan, Tablet}
+import akka.util.Timeout
+import nl.tudelft.htable.core.{Get, Node, Row, RowRange, Scan, Tablet}
 import nl.tudelft.htable.protocol.SerializationUtils
 import nl.tudelft.htable.protocol.SerializationUtils._
-import nl.tudelft.htable.protocol.admin._
-import nl.tudelft.htable.protocol.client._
-import nl.tudelft.htable.protocol.internal._
+import nl.tudelft.htable.protocol.admin.{
+  AdminService,
+  AdminServiceHandler,
+  CreateTableRequest,
+  CreateTableResponse,
+  DeleteTableRequest,
+  DeleteTableResponse
+}
+import nl.tudelft.htable.protocol.client.{
+  ClientService,
+  ClientServiceHandler,
+  MutateRequest,
+  MutateResponse,
+  ReadRequest,
+  ReadResponse
+}
+import nl.tudelft.htable.protocol.internal.{
+  AssignRequest,
+  AssignResponse,
+  InternalService,
+  InternalServiceHandler,
+  PingRequest,
+  PingResponse,
+  QueryRequest,
+  QueryResponse
+}
 import nl.tudelft.htable.server.core.util.AkkaServiceHandler
 import nl.tudelft.htable.storage.StorageDriver
 import org.apache.curator.framework.CuratorFramework
@@ -146,29 +169,30 @@ object HTableServer {
           case NodeManager.Read(query, replyTo) =>
             query match {
               case Get(table, key) =>
-                Option(tablets.floorEntry(Tablet(table, key, ByteString.empty))) match {
+                Option(tablets.floorEntry(Tablet(table, RowRange.leftBounded(key)))) match {
                   case Some(entry) => entry.getValue ! NodeManager.Read(query, replyTo)
-                  case None =>
+                  case None        =>
                 }
               case Scan(table, range) =>
                 implicit val timeout: Timeout = 3.seconds
                 implicit val sys: ActorSystem[Nothing] = context.system
 
-                val start = Tablet(table, range.start, range.end)
-                val end = Tablet(table, range.end, ByteString.empty)
+                val start = Tablet(table, range)
+                val end = Tablet(table, RowRange.leftBounded(range.end))
 
-                val source: Source[Row, NotUsed] = Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
-                  .map(entry =>  entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range), _)))
-                  .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
-                  .flatMapConcat(_.rows)
+                val source: Source[Row, NotUsed] =
+                  Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
+                    .map(entry => entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range), _)))
+                    .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
+                    .flatMapConcat(_.rows)
 
                 replyTo ! NodeManager.ReadResponse(source)
             }
             Behaviors.same
           case NodeManager.Mutate(mutation, replyTo) =>
-            Option(tablets.floorEntry(Tablet(mutation.table, mutation.key, ByteString.empty))) match {
+            Option(tablets.floorEntry(Tablet(mutation.table, RowRange.leftBounded(mutation.key)))) match {
               case Some(entry) => entry.getValue ! NodeManager.Mutate(mutation, replyTo)
-              case None =>
+              case None        =>
             }
             Behaviors.same
           case _ => throw new IllegalArgumentException()
@@ -271,29 +295,30 @@ object HTableServer {
           case NodeManager.Read(query, replyTo) =>
             query match {
               case Get(table, key) =>
-                Option(tablets.floorEntry(Tablet(table, key, ByteString.empty))) match {
+                Option(tablets.floorEntry(Tablet(table, RowRange.leftBounded(key)))) match {
                   case Some(entry) => entry.getValue ! NodeManager.Read(query, replyTo)
-                  case None =>
+                  case None        =>
                 }
               case Scan(table, range) =>
                 implicit val timeout: Timeout = 3.seconds
                 implicit val sys: ActorSystem[Nothing] = context.system
 
-                val start = Tablet(table, range.start, range.end)
-                val end = Tablet(table, range.end, ByteString.empty)
+                val start = Tablet(table, range)
+                val end = Tablet(table, RowRange.leftBounded(range.end))
 
-                val source: Source[Row, NotUsed] = Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
-                  .map(entry =>  entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range), _)))
-                  .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
-                  .flatMapConcat(_.rows)
+                val source: Source[Row, NotUsed] =
+                  Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
+                    .map(entry => entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range), _)))
+                    .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
+                    .flatMapConcat(_.rows)
 
                 replyTo ! NodeManager.ReadResponse(source)
             }
             Behaviors.same
           case NodeManager.Mutate(mutation, replyTo) =>
-            Option(tablets.floorEntry(Tablet(mutation.table, mutation.key, ByteString.empty))) match {
+            Option(tablets.floorEntry(Tablet(mutation.table, RowRange.leftBounded(mutation.key)))) match {
               case Some(entry) => entry.getValue ! NodeManager.Mutate(mutation, replyTo)
-              case None =>
+              case None        =>
             }
             Behaviors.same
           case _ => throw new IllegalArgumentException()
@@ -340,7 +365,6 @@ object HTableServer {
       extends ClientService {
     implicit val timeout: Timeout = 3.seconds
     implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
-
 
     /**
      * Read the specified row (range) and stream back the response.
