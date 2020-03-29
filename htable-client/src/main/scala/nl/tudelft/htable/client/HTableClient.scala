@@ -8,7 +8,8 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.core.{Query, Row, RowMutation}
-import nl.tudelft.htable.protocol.SerializationUtils
+import nl.tudelft.htable.protocol.ClientAdapters._
+import nl.tudelft.htable.protocol.CoreAdapters
 import nl.tudelft.htable.protocol.client.ClientServiceClient
 import org.apache.curator.framework.CuratorFramework
 
@@ -65,15 +66,15 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
   implicit val ec: ExecutionContextExecutor = sys.dispatcher
 
   override def read(query: Query): Source[Row, NotUsed] = {
-    val rootAddress = SerializationUtils.deserialize(zookeeper.getData.forPath("/root"))
+    val rootAddress = CoreAdapters.deserializeAddress(zookeeper.getData.forPath("/root"))
     val client = openClient(rootAddress)
-    SerializationUtils.toRows(client.read(SerializationUtils.toReadRequest(query)))
+    client.read(query)
   }
 
   override def mutate(mutation: RowMutation): Future[Done] = {
-    val rootAddress = SerializationUtils.deserialize(zookeeper.getData.forPath("/root"))
+    val rootAddress = CoreAdapters.deserializeAddress(zookeeper.getData.forPath("/root"))
     val client = openClient(rootAddress)
-    client.mutate(SerializationUtils.toMutateRequest(mutation)).map(_ => Done)
+    client.mutate(mutation).map(_ => Done)
   }
 
   override def closed(): Future[Done] = promise.future

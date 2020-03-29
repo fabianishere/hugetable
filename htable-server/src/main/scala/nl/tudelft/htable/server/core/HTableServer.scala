@@ -13,34 +13,10 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.util.Timeout
 import nl.tudelft.htable.core.{Get, Node, Row, RowRange, Scan, Tablet}
-import nl.tudelft.htable.protocol.SerializationUtils
-import nl.tudelft.htable.protocol.SerializationUtils._
-import nl.tudelft.htable.protocol.admin.{
-  AdminService,
-  AdminServiceHandler,
-  CreateTableRequest,
-  CreateTableResponse,
-  DeleteTableRequest,
-  DeleteTableResponse
-}
-import nl.tudelft.htable.protocol.client.{
-  ClientService,
-  ClientServiceHandler,
-  MutateRequest,
-  MutateResponse,
-  ReadRequest,
-  ReadResponse
-}
-import nl.tudelft.htable.protocol.internal.{
-  AssignRequest,
-  AssignResponse,
-  InternalService,
-  InternalServiceHandler,
-  PingRequest,
-  PingResponse,
-  QueryRequest,
-  QueryResponse
-}
+import nl.tudelft.htable.protocol.admin.AdminServiceHandler
+import nl.tudelft.htable.protocol.client.ClientServiceHandler
+import nl.tudelft.htable.protocol.internal.InternalServiceHandler
+import nl.tudelft.htable.server.core.services.{AdminServiceImpl, ClientServiceImpl, InternalServiceImpl}
 import nl.tudelft.htable.server.core.util.AkkaServiceHandler
 import nl.tudelft.htable.storage.StorageDriver
 import org.apache.curator.framework.CuratorFramework
@@ -344,9 +320,9 @@ object HTableServer {
     implicit val ec: ExecutionContext =
       context.system.dispatchers.lookup(DispatcherSelector.default())
 
-    val client = ClientServiceHandler.partial(new ClientServiceImpl(context.self))
-    val admin = AdminServiceHandler.partial(new AdminServiceImpl(context.self))
-    val internal = InternalServiceHandler.partial(new InternalServiceImpl(context.self))
+    val client = ClientServiceHandler.partial(new ClientServiceImpl(context))
+    val admin = AdminServiceHandler.partial(new AdminServiceImpl(context))
+    val internal = InternalServiceHandler.partial(new InternalServiceImpl(context))
 
     // Create service handlers
     val service: HttpRequest => Future[HttpResponse] =
@@ -359,73 +335,5 @@ object HTableServer {
       port = 0, // Let the OS assign some port to us.
       connectionContext = HttpConnectionContext()
     )
-  }
-
-  private class ClientServiceImpl(self: ActorRef[NodeManager.Command])(implicit val sys: ActorSystem[Nothing])
-      extends ClientService {
-    implicit val timeout: Timeout = 3.seconds
-    implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
-
-    /**
-     * Read the specified row (range) and stream back the response.
-     */
-    override def read(in: ReadRequest): Source[ReadResponse, NotUsed] = {
-      Source
-        .future(self.ask[NodeManager.ReadResponse](ref => NodeManager.Read(toQuery(in), ref)))
-        .flatMapConcat(_.rows)
-        .map(row => ReadResponse(cells = row.cells.map(cell => SerializationUtils.toPBCell(row, cell))))
-    }
-
-    /**
-     * Mutate a specified row in a table.
-     */
-    override def mutate(in: MutateRequest): Future[MutateResponse] = {
-      self
-        .ask[NodeManager.MutateResponse.type](NodeManager.Mutate(SerializationUtils.toRowMutation(in), _))
-        .map(_ => MutateResponse())
-    }
-  }
-
-  private class AdminServiceImpl(self: ActorRef[NodeManager.Command])(implicit val sys: ActorSystem[Nothing])
-      extends AdminService {
-
-    /**
-     * Create a new table in the cluster.
-     */
-    override def createTable(in: CreateTableRequest): Future[CreateTableResponse] = ???
-
-    /**
-     * Delete a table in the cluster.
-     */
-    override def deleteTable(in: DeleteTableRequest): Future[DeleteTableResponse] = ???
-  }
-
-  private class InternalServiceImpl(self: ActorRef[NodeManager.Command])(implicit val sys: ActorSystem[Nothing])
-      extends InternalService {
-    // asking someone requires a timeout if the timeout hits without response
-    // the ask is failed with a TimeoutException
-    implicit val timeout: Timeout = 3.second
-    implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
-
-    /**
-     * Ping a self in the cluster.
-     */
-    override def ping(in: PingRequest): Future[PingResponse] = self.ask(NodeManager.Ping).map(_ => PingResponse())
-
-    /**
-     * QueryTablets a self for the tablets it's serving.
-     */
-    override def query(in: QueryRequest): Future[QueryResponse] =
-      self
-        .ask(NodeManager.QueryTablets)
-        .map(res => QueryResponse(res.tablets.map(t => t)))
-
-    /**
-     * Assign the specified tablets to the self.
-     */
-    override def assign(in: AssignRequest): Future[AssignResponse] = {
-      self ! NodeManager.Assign(in.tablets.map(t => t))
-      Future.successful(AssignResponse())
-    }
   }
 }

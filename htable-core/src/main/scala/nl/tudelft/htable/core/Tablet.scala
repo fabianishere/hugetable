@@ -17,5 +17,10 @@ object Tablet {
   /**
    * Determine if a [Tablet] is the root tablet.
    */
-  def isRoot(tablet: Tablet): Boolean = tablet.table == "METADATA" && !tablet.range.isLeftBounded
+  def isRoot(tablet: Tablet): Boolean = isMeta(tablet) && !tablet.range.isLeftBounded
+
+  /**
+   * Determine if a [Tablet] is a metadata tablet.
+   */
+  def isMeta(tablet: Tablet): Boolean = tablet.table.equalsIgnoreCase("METADATA")
 }

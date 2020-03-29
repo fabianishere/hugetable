@@ -10,9 +10,9 @@ import akka.grpc.GrpcClientSettings
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import nl.tudelft.htable.core._
-import nl.tudelft.htable.protocol.SerializationUtils
-import nl.tudelft.htable.protocol.SerializationUtils._
-import nl.tudelft.htable.protocol.client.ClientServiceClient
+import nl.tudelft.htable.protocol.InternalAdapters._
+import nl.tudelft.htable.protocol.ClientAdapters._
+import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest}
 import nl.tudelft.htable.protocol.internal.{AssignRequest, InternalServiceClient, PingRequest, QueryRequest}
 
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor}
@@ -104,10 +104,10 @@ object NodeManager {
           internalClient.assign(AssignRequest(tablets = tablets.map(t => t)))
           Behaviors.same
         case Read(query, replyTo) =>
-          replyTo ! ReadResponse(SerializationUtils.toRows(client.read(toReadRequest(query))))
+          replyTo ! ReadResponse(client.read(query))
           Behaviors.same
         case Mutate(mutation, replyTo) =>
-          client.mutate(toMutateRequest(mutation)).onComplete {
+          client.mutate(mutation).onComplete {
             case Success(_)         => replyTo ! NodeManager.MutateResponse
             case Failure(exception) => context.log.error("Failure to run mutation", exception)
           }

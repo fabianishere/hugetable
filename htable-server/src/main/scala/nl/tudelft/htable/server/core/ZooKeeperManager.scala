@@ -3,17 +3,16 @@ package nl.tudelft.htable.server.core
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector, PostStop}
 import nl.tudelft.htable.core.Node
-import nl.tudelft.htable.protocol.SerializationUtils
+import nl.tudelft.htable.protocol.ClientAdapters._
+import nl.tudelft.htable.protocol.CoreAdapters
 import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
 import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.framework.api.CuratorWatcher
-import org.apache.curator.framework.recipes.cache.{ChildData, NodeCache, NodeCacheListener, PathChildrenCache}
+import org.apache.curator.framework.recipes.cache.{ChildData, NodeCache}
 import org.apache.curator.framework.recipes.leader.{LeaderLatch, LeaderLatchListener}
-import org.apache.curator.framework.recipes.nodes.{PersistentNode, PersistentNodeListener}
+import org.apache.curator.framework.recipes.nodes.PersistentNode
 import org.apache.curator.framework.state.ConnectionState
 import org.apache.curator.utils.ZKPaths
-import org.apache.zookeeper.data.Stat
-import org.apache.zookeeper.{CreateMode, WatchedEvent, Watcher}
+import org.apache.zookeeper.CreateMode
 
 import scala.language.implicitConversions
 
@@ -118,7 +117,7 @@ object ZooKeeperManager {
 
       // Create group membership
       val membership =
-        new GroupMember(zookeeper, "/servers", node.uid, SerializationUtils.serialize(node.address))
+        new GroupMember(zookeeper, "/servers", node.uid, CoreAdapters.serializeAddress(node.address))
       membership.addListener(new GroupMemberListener {
         override def memberJoined(data: ChildData): Unit = listener ! NodeJoined(data)
         override def memberLeft(data: ChildData): Unit = listener ! NodeLeft(data)
@@ -152,7 +151,7 @@ object ZooKeeperManager {
                                          CreateMode.EPHEMERAL,
                                          false,
                                          "/root",
-                                         SerializationUtils.serialize(node.address))
+                                         CoreAdapters.serializeAddress(node.address))
             pen.start()
             rootClaim = Some(pen)
             Behaviors.same
@@ -178,5 +177,5 @@ object ZooKeeperManager {
    * Convert [ChildData] into [Node].
    */
   private implicit def toNode(data: ChildData): Node =
-    Node(ZKPaths.getNodeFromPath(data.getPath), SerializationUtils.deserialize(data.getData))
+    Node(ZKPaths.getNodeFromPath(data.getPath), CoreAdapters.deserializeAddress(data.getData))
 }
