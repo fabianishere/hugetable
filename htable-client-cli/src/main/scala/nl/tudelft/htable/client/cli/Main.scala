@@ -39,14 +39,15 @@ object Main {
 
     val client = HTableClient(zookeeper)
 
-    client.mutate(
-      RowMutation("METADATA", ByteString("test"))
-        .append(RowCell(ByteString("test"), System.currentTimeMillis(), ByteString("hi"))))
-
     client
       .read(Scan("METADATA", RowRange.unbounded))
       .log("error logging")
-      .runForeach(e => println(e))
+      .runForeach { row =>
+        println(s"KEY: ${row.key.utf8String}")
+        row.cells.foreach { cell =>
+          println(s"\t${cell.qualifier.utf8String}[${cell.timestamp}] = ${cell.value}")
+        }
+      }
       .onComplete {
         case Success(value) =>
           println(value)

@@ -69,6 +69,9 @@ message ReadRequest {
         // Contiguous row range included in the set.
         RowRange row_range = 3;
     }
+
+    // A flag to indicate the scan should be reversed.
+    bool reversed = 4;
 }
 
 // Response message for ClientService.Read.

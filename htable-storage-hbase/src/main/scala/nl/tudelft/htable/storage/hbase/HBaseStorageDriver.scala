@@ -16,7 +16,11 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
 
   ChunkCreator.initialize(MemStoreLAB.CHUNK_SIZE_DEFAULT, false, 0, 0, 0, null)
 
-  override def openTablet(tablet: Tablet): TabletDriver = {
+  override def openTablet(tablet: Tablet): TabletDriver = createTablet(tablet, open = true)
+
+  override def createTablet(tablet: Tablet): TabletDriver = createTablet(tablet, open = false)
+
+  private def createTablet(tablet: Tablet, open: Boolean): TabletDriver = {
     val tableName = TableName.valueOf(tablet.table)
     val tableDescriptor = TableDescriptorBuilder
       .newBuilder(tableName)
@@ -33,40 +37,16 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
     // @todo add region id to be able to reopen files in a later stage
     val info = RegionInfoBuilder
       .newBuilder(tableName)
-      .setRegionId(1)
+      .setRegionId(System.currentTimeMillis())
       .setStartKey(tablet.range.start.toArray)
       .setEndKey(tablet.range.end.toArray)
       .build
 
     val WAL = factory.getWAL(info)
-    val region = HRegion.openHRegion(conf, FileSystem.get(conf), rootDir, info, tableDescriptor, WAL)
-    new HBaseTabletDriver(region, tablet)
-  }
-
-  override def createTablet(tablet: Tablet): TabletDriver = {
-    val tableName = TableName.valueOf(tablet.table)
-    val tableDescriptor = TableDescriptorBuilder
-      .newBuilder(tableName)
-      .setColumnFamily(HBaseStorageDriver.columnFamily)
-      .build
-
-    val conf = fs.getConf
-    val rootDir = new Path("hregions")
-    conf.set(HConstants.HBASE_DIR, rootDir.toString)
-    conf.set("hbase.wal.provider", "org.apache.hadoop.hbase.wal.DisabledWALProvider")
-
-    val factory = new WALFactory(conf, "hregion-tablet")
-
-    // @todo add region id to be able to reopen files in a later stage
-    val info = RegionInfoBuilder
-      .newBuilder(tableName)
-      .setRegionId(1)
-      .setStartKey(tablet.range.start.toArray)
-      .setEndKey(tablet.range.end.toArray)
-      .build
-
-    val WAL = factory.getWAL(info)
-    val region = HRegion.createHRegion(info, rootDir, conf, tableDescriptor, WAL, true)
+    val region = if (open)
+      HRegion.openHRegion(conf, FileSystem.get(conf), rootDir, info, tableDescriptor, WAL)
+    else
+      HRegion.createHRegion(info, rootDir, conf, tableDescriptor, WAL, true)
     new HBaseTabletDriver(region, tablet)
   }
 
@@ -75,5 +55,8 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
 
 object HBaseStorageDriver {
   private val columnFamily =
-    ColumnFamilyDescriptorBuilder.newBuilder("hregion".getBytes("UTF-8")).build()
+    ColumnFamilyDescriptorBuilder
+      .newBuilder("hregion".getBytes("UTF-8"))
+      .setMaxVersions(10) // TODO Add option for specifying this
+      .build()
 }

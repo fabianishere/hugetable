@@ -17,4 +17,4 @@ final case class Get(override val table: String, key: ByteString) extends Query(
 /**
  * A query to obtain a range of rows.
  */
-final case class Scan(override val table: String, range: RowRange) extends Query(table)
+final case class Scan(override val table: String, range: RowRange, reversed: Boolean = false) extends Query(table)

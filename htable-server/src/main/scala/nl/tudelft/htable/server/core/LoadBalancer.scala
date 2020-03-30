@@ -6,7 +6,7 @@ import akka.stream.Materializer
 import akka.stream.typed.scaladsl.ActorSink
 import akka.util.{ByteString, Timeout}
 import nl.tudelft.htable.core.{Node, Row, RowCell, RowMutation, RowRange, Scan, Tablet}
-import nl.tudelft.htable.server.core.NodeManager.Mutate
+import nl.tudelft.htable.server.core.NodeManager.{Mutate, MutateResponse}
 
 import scala.collection.mutable
 import scala.concurrent.duration._
@@ -151,28 +151,31 @@ object LoadBalancer {
             node
         }
 
-        assignedTablets(tablet) = node
-        queue -= tablet
 
         // Update metadata tablets if needed
-        if (!Tablet.isRoot(tablet)) {
-          val key = ByteString(tablet.table) ++ tablet.range.start
-          val (_, metaNode) = assignedTablets.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last
-          val metaRef = nodes(metaNode)
-          val time = System.currentTimeMillis()
-          val mutation = RowMutation("METADATA", key)
-              .append(RowCell(ByteString("tablet"), time, ByteString(tablet.table)))
-              .append(RowCell(ByteString("start-key"), time, tablet.range.start))
-              .append(RowCell(ByteString("end-key"), time, tablet.range.end))
-              .append(RowCell(ByteString("node"), time, ByteString(node.uid)))
+        val key = ByteString(tablet.table) ++ tablet.range.start
+        val metaNode =
+          if (Tablet.isRoot(tablet))
+            node
+          else
+            assignedTablets.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
+        val metaRef = nodes(metaNode)
+        val time = System.currentTimeMillis()
+        val mutation = RowMutation("METADATA", key)
+            .put(RowCell(ByteString("table"), time, ByteString(tablet.table)))
+            .put(RowCell(ByteString("start-key"), time, tablet.range.start))
+            .put(RowCell(ByteString("end-key"), time, tablet.range.end))
+            .put(RowCell(ByteString("node"), time, ByteString(node.uid)))
 
-          context.log.info(s"Asking $metaNode to update METADATA tablet")
+        context.log.info(s"Asking $metaNode to update METADATA tablet")
 
-          context.ask(metaRef, (ref: ActorRef[NodeManager.MutateResponse.type]) => Mutate(mutation, ref)) {
-            case Success(event) => NodeEvent(node, event)
-            case Failure(e)     => NodeFailure(node, e)
-          }
+        context.ask(metaRef, (ref: ActorRef[NodeManager.MutateResponse.type]) => Mutate(mutation, ref)) {
+          case Success(event) => NodeEvent(node, event)
+          case Failure(e)     => NodeFailure(node, e)
         }
+
+        queue -= tablet
+        assignedTablets(tablet) = node
 
         if (Tablet.isMeta(tablet) && !queriedNodes.contains(node)) {
           query(node)
@@ -190,6 +193,9 @@ object LoadBalancer {
                                                onCompleteMessage = NodeComplete(node),
                                                onFailureMessage = NodeFailure(node, _))
         rows.map(row => NodeRow(node, row)).runWith(sink)
+        Behaviors.same
+      case NodeEvent(_, MutateResponse) =>
+        // TODO Handle this in the future
         Behaviors.same
       case NodeEvent(_, event) =>
         context.log.info(s"Received unknown event $event")

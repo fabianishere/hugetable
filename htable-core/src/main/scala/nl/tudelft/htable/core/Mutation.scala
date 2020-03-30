@@ -8,9 +8,9 @@ sealed trait Mutation
 object Mutation {
 
   /**
-   * Append a cell to the row.
+   * Put a cell in the row.
    */
-  final case class AppendCell(cell: RowCell) extends Mutation
+  final case class PutCell(cell: RowCell) extends Mutation
 
   /**
    * Remove a cell from the row.

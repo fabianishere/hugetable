@@ -2,7 +2,7 @@ package nl.tudelft.htable.server.core
 
 import java.util
 
-import akka.NotUsed
+import akka.{Done, NotUsed}
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
@@ -32,7 +32,7 @@ object HTableServer {
   /**
    * Internal commands that are accepted by the [HTableServer].
    */
-  private sealed trait Command
+  sealed trait Command
 
   /**
    * Internal message indicating that the gRPC service is up.
@@ -48,6 +48,16 @@ object HTableServer {
    * Internal message wrapper for ZooKeeper event.
    */
   private final case class ZooKeeperEvent(event: ZooKeeperManager.Event) extends Command
+
+  /**
+   * Request the server to create a new table.
+   */
+  final case class CreateTable(name: String, replyTo: ActorRef[Done]) extends Command
+
+  /**
+   * Request the server to delete a table.
+   */
+  final case class DeleteTable(name: String, replyTo: ActorRef[Done]) extends Command
 
   /**
    * Construct the main logic of the server.
@@ -149,7 +159,7 @@ object HTableServer {
                   case Some(entry) => entry.getValue ! NodeManager.Read(query, replyTo)
                   case None        =>
                 }
-              case Scan(table, range) =>
+              case Scan(table, range, reversed) =>
                 implicit val timeout: Timeout = 3.seconds
                 implicit val sys: ActorSystem[Nothing] = context.system
 
@@ -158,7 +168,7 @@ object HTableServer {
 
                 val source: Source[Row, NotUsed] =
                   Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
-                    .map(entry => entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range), _)))
+                    .map(entry => entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _)))
                     .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
                     .flatMapConcat(_.rows)
 
@@ -170,6 +180,12 @@ object HTableServer {
               case Some(entry) => entry.getValue ! NodeManager.Mutate(mutation, replyTo)
               case None        =>
             }
+            Behaviors.same
+          case CreateTable(_, replyTo) =>
+            replyTo ! Done // TODO Add error handling
+            Behaviors.same
+          case DeleteTable(_, replyTo) =>
+            replyTo ! Done
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }
@@ -275,16 +291,17 @@ object HTableServer {
                   case Some(entry) => entry.getValue ! NodeManager.Read(query, replyTo)
                   case None        =>
                 }
-              case Scan(table, range) =>
+              case Scan(table, range, reversed) =>
                 implicit val timeout: Timeout = 3.seconds
                 implicit val sys: ActorSystem[Nothing] = context.system
 
                 val start = Tablet(table, range)
                 val end = Tablet(table, RowRange.leftBounded(range.end))
 
+                // TODO FIX REVERSE
                 val source: Source[Row, NotUsed] =
                   Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
-                    .map(entry => entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range), _)))
+                    .map(entry => entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _)))
                     .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
                     .flatMapConcat(_.rows)
 
@@ -296,6 +313,12 @@ object HTableServer {
               case Some(entry) => entry.getValue ! NodeManager.Mutate(mutation, replyTo)
               case None        =>
             }
+            Behaviors.same
+          case CreateTable(_, replyTo) =>
+            replyTo ! Done // TODO Implement this
+            Behaviors.same
+          case DeleteTable(_, replyTo) =>
+            replyTo ! Done
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }

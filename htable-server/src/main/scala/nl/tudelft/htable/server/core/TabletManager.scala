@@ -15,7 +15,13 @@ object TabletManager {
    */
   def apply(storageDriver: StorageDriver, tablet: Tablet): Behavior[NodeManager.Command] = Behaviors.setup { context =>
     context.log.info(s"Opening storage driver for $tablet")
-    val driver = storageDriver.openTablet(tablet)
+    val driver = try {
+      storageDriver.openTablet(tablet)
+    } catch {
+      case e: Exception =>
+        context.log.error("Failed to open storage driver", e)
+        return Behaviors.stopped
+    }
 
     Behaviors
       .receiveMessagePartial[NodeManager.Command] {

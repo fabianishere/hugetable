@@ -13,7 +13,7 @@ final case class RowMutation private (table: String, key: ByteString, mutations:
   /**
    * Append the specified cell to the row.
    */
-  def append(cell: RowCell): RowMutation = copy(mutations = Mutation.AppendCell(cell) :: mutations)
+  def put(cell: RowCell): RowMutation = copy(mutations = Mutation.PutCell(cell) :: mutations)
 
   /**
    * Mark the row as deleted.

@@ -4,11 +4,15 @@ import java.io.File
 import java.util.UUID
 
 import akka.actor.typed.ActorSystem
+import com.sun.security.auth.module.UnixSystem
 import com.typesafe.config.ConfigFactory
 import nl.tudelft.htable.server.core.HTableServer
-import nl.tudelft.htable.storage.mem.InMemoryStorageDriver
+import nl.tudelft.htable.storage.hbase.HBaseStorageDriver
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.hdfs.MiniDFSCluster
+import org.apache.hadoop.test.PathUtils
 import org.rogach.scallop.{ScallopConf, ScallopOption}
 
 import scala.collection.Seq
@@ -35,8 +39,24 @@ object Main {
       .parseString("akka.http.server.preview.enable-http2 = on")
       .withFallback(ConfigFactory.defaultApplication())
 
-    val driver = new InMemoryStorageDriver()
+    val cluster = startHDFS()
+    val driver = new HBaseStorageDriver(cluster.getFileSystem)
     ActorSystem(HTableServer(UUID.randomUUID().toString, zookeeper, driver), "htable", actorConf)
+  }
+
+  /**
+   * Create a mini Hadoop HDFS cluster.
+   */
+  def startHDFS(): MiniDFSCluster = {
+    println("Starting HDFS Cluster...")
+    val baseDir = new File("miniHDFS")
+    val conf = new Configuration()
+    conf.set(MiniDFSCluster.HDFS_MINIDFS_BASEDIR, baseDir.getAbsolutePath)
+    val builder = new MiniDFSCluster.Builder(conf)
+
+    val hdfsCluster = builder.build()
+    hdfsCluster.waitClusterUp()
+    hdfsCluster
   }
 
   /**
