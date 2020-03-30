@@ -1,12 +1,12 @@
 package nl.tudelft.htable.server.core.services
 
-import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.ActorContext
+import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.{ActorSystem, DispatcherSelector}
 import akka.util.Timeout
-import nl.tudelft.htable.protocol.internal.{AssignRequest, AssignResponse, InternalService, PingRequest, PingResponse, QueryRequest, QueryResponse}
-import nl.tudelft.htable.server.core.NodeManager
 import nl.tudelft.htable.protocol.InternalAdapters._
+import nl.tudelft.htable.protocol.internal._
+import nl.tudelft.htable.server.core.NodeManager
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}

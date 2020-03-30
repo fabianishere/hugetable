@@ -6,18 +6,19 @@ import java.nio.charset.StandardCharsets
 import akka.actor.ActorSystem
 import akka.grpc.GrpcClientSettings
 import akka.stream.Materializer
-import akka.stream.scaladsl.{Sink, Source}
+import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import akka.{Done, NotUsed}
-import nl.tudelft.htable.core.{Get, Query, Row, RowMutation, RowRange, Scan}
+import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol.ClientAdapters._
 import nl.tudelft.htable.protocol.CoreAdapters
-import nl.tudelft.htable.protocol.admin.{AdminServiceClient, CreateTableRequest, CreateTableResponse, DeleteTableRequest}
+import nl.tudelft.htable.protocol.admin.{AdminServiceClient, CreateTableRequest, DeleteTableRequest}
 import nl.tudelft.htable.protocol.client.ClientServiceClient
 import org.apache.curator.framework.CuratorFramework
 
-import scala.concurrent.duration._
-import scala.concurrent.{Await, ExecutionContextExecutor, Future, Promise}
+import scala.collection.mutable
+import scala.concurrent.{ExecutionContextExecutor, Future, Promise}
+import scala.util.Try
 
 /**
  * A client interface for accessing and operating on a HTable cluster.
@@ -79,6 +80,8 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
   implicit val mat: Materializer = Materializer(sys)
   implicit val ec: ExecutionContextExecutor = sys.dispatcher
 
+  private val clientCache = new mutable.HashMap[InetSocketAddress, ClientServiceClient]
+
   override def create(name: String): Future[Done] =  {
     val client = openAdmin()
     client.createTable(CreateTableRequest(name)).map(_ => Done)
@@ -92,17 +95,18 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
 
   override def read(query: Query): Source[Row, NotUsed] = {
     val address = query match {
-      case Get(table, key) => resolveLocation(table, key)
-      case Scan(table, range, _) => resolveLocation(table, range.start)
+      case Get(table, key) => resolveLocations(table, RowRange(key, key))
+      case Scan(table, range, _) => resolveLocations(table, range)
     }
 
-    address match {
-      case Some(value) =>
-        val client = openClient(value)
-        read(query, client)
-      case None =>
-        Source.empty
-    }
+    address.flatMapConcat { case (address, range) =>
+          val client = openClient(address)
+          val updatedQuery = query match {
+            case Scan(table, _, reversed) => Scan(table, range, reversed)
+            case _ => query
+          }
+          read(updatedQuery, client)
+        }
   }
 
   private def read(query: Query, client: ClientServiceClient): Source[Row, NotUsed] = {
@@ -125,54 +129,81 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
     promise.future
   }
 
-  private def resolveLocation(table: String, startKey: ByteString): Option[InetSocketAddress] = {
-    val rootAddress = CoreAdapters.deserializeAddress(zookeeper.getData.forPath("/root"))
+  private def resolveLocations(table: String, range: RowRange): Source[(InetSocketAddress, RowRange), NotUsed] = {
+    val rootAddress = resolveRoot()
+    val rootClient = getClient(rootAddress)
 
-    if (table.equalsIgnoreCase("METADATA") && startKey.isEmpty) {
-      return Some(rootAddress)
-    }
-
-    val rootClient = openClient(rootAddress)
-
-    // Append a single character to range since it is exclusive
-    val key = startKey ++ ByteString("a")
+    // Append a character to range
     val metaKey = if (table.equalsIgnoreCase("METADATA"))
-      ByteString("METADATA") ++ key
+      ByteString("METADATA") ++ range.end ++ ByteString(9)
     else
-      ByteString("METADATA" ++ table) ++ key
+      ByteString("METADATA" ++ table) ++ range.end ++ ByteString(9)
 
-    val meta = read(Scan("METADATA", RowRange.rightBounded(metaKey), reversed = true), rootClient)
-      .runWith(Sink.headOption)
+    val meta: Source[(InetSocketAddress, RowRange), NotUsed] = read(Scan("METADATA", RowRange.rightBounded(metaKey), reversed = true), rootClient)
+      .takeWhile(row => Order.keyOrdering.gt(row.key, range.start), inclusive = true)
+      .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
+      .mapConcat[Row](identity)
+      .mapConcat[(InetSocketAddress, RowRange)] { row =>
+        val res = for {
+          startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
+          endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
+          range = RowRange(startKey.value, endKey.value)
+          nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
+          uid = nodeCell.value.utf8String
+          metaAddress <- Try { CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid")) }.toOption
+        } yield (metaAddress, range)
+        res.map(Seq(_)).getOrElse(Seq())
+      }
 
-    Await.result(meta, 5.seconds) match {
-      case Some(value) =>
-        val metaAddress = CoreAdapters.deserializeAddress(value.cells.find(_.qualifier == "node").get.value.toArray)
-        val metaClient = if (metaAddress == rootAddress) rootClient else openClient(metaAddress)
-        val tabletKey = ByteString(table) ++ key
-        val tablet = read(Scan("METADATA", RowRange.rightBounded(tabletKey), reversed = true), metaClient)
-          .runWith(Sink.headOption)
-
-        try {
-          Await.result(tablet, 5.seconds)
-            .map(value => CoreAdapters.deserializeAddress(value.cells.find(_.qualifier == "node").get.value.toArray))
-        } finally  {
-          rootClient.close()
-          metaClient.close()
-        }
-      case None => None
+    if (table.equalsIgnoreCase("METADATA")) {
+      return meta
     }
+
+    meta.flatMapConcat { case (address, metaRange) =>
+      val metaClient = getClient(address)
+      val tabletKey = Order.keyOrdering.min(ByteString(table) ++ range.end, metaRange.end)
+      read(Scan("METADATA", RowRange.rightBounded(tabletKey), reversed = true), metaClient)
+        .takeWhile(row => Order.keyOrdering.gteq(row.key, range.start))
+        .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
+        .mapConcat[Row](identity)
+        .mapConcat[(InetSocketAddress, RowRange)] { row =>
+          val res = for {
+            startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
+            endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
+            range = RowRange(startKey.value, endKey.value)
+            nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
+            uid = nodeCell.value.utf8String
+            metaAddress <- Try { CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid")) }.toOption
+          } yield (metaAddress, range)
+          res.map(Seq(_)).getOrElse(Seq())
+        }
+    }
+  }
+
+  private def resolveRoot(): InetSocketAddress = {
+     CoreAdapters.deserializeAddress(zookeeper.getData.forPath("/root"))
+  }
+
+  private def resolveMaster(): InetSocketAddress = {
+    val masterUid = new String(zookeeper.getData.forPath("/leader"), StandardCharsets.UTF_8)
+    CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/server/$masterUid"))
+  }
+
+  private def getClient(address: InetSocketAddress): ClientServiceClient = {
+    clientCache.getOrElseUpdate(address, openClient(address))
   }
 
   private def openClient(address: InetSocketAddress): ClientServiceClient = {
     val settings = GrpcClientSettings
       .connectToServiceAt(address.getHostString, address.getPort)
       .withTls(false)
-    ClientServiceClient(settings)
+    val client = ClientServiceClient(settings)
+    clientCache(address) = client
+    client
   }
 
   private def openAdmin(): AdminServiceClient = {
-    val masterUid = new String(zookeeper.getData.forPath("/leader"), StandardCharsets.UTF_8)
-    val address = CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/server/$masterUid"))
+    val address = resolveMaster()
     val settings = GrpcClientSettings
       .connectToServiceAt(address.getHostString, address.getPort)
       .withTls(false)

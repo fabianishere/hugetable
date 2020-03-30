@@ -3,7 +3,7 @@ package nl.tudelft.htable.storage.mem
 import akka.NotUsed
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import nl.tudelft.htable.core.{Get, Mutation, Order, Query, Row, RowCell, RowMutation, Scan, Tablet}
+import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
 
 import scala.collection.mutable

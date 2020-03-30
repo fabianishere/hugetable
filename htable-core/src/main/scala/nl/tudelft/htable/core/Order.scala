@@ -45,13 +45,12 @@ object Order {
 
         result = Order.compare(l.range.end, r.range.end)
 
-        if (l.range.isLeftBounded && !l.range.isRightBounded) {
+        if (l.range.isLeftBounded && !l.range.isRightBounded)
           1 // This is the last region
-        } else if (r.range.isLeftBounded && !r.range.isRightBounded) {
+        else if (r.range.isLeftBounded && !r.range.isRightBounded)
           -1 // r is the last region
-        } else {
+        else
           result
-        }
       }
     }))
 

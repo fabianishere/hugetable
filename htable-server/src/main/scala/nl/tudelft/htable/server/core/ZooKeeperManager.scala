@@ -3,7 +3,6 @@ package nl.tudelft.htable.server.core
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector, PostStop}
 import nl.tudelft.htable.core.Node
-import nl.tudelft.htable.protocol.ClientAdapters._
 import nl.tudelft.htable.protocol.CoreAdapters
 import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
 import org.apache.curator.framework.CuratorFramework

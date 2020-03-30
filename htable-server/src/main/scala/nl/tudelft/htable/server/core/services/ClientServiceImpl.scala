@@ -1,14 +1,14 @@
 package nl.tudelft.htable.server.core.services
 
 import akka.NotUsed
-import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.ActorContext
+import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.{ActorSystem, DispatcherSelector}
 import akka.stream.scaladsl.Source
 import akka.util.Timeout
 import nl.tudelft.htable.protocol.ClientAdapters
 import nl.tudelft.htable.protocol.ClientAdapters._
-import nl.tudelft.htable.protocol.client.{ClientService, MutateRequest, MutateResponse, ReadRequest, ReadResponse}
+import nl.tudelft.htable.protocol.client._
 import nl.tudelft.htable.server.core.NodeManager
 
 import scala.concurrent.duration._

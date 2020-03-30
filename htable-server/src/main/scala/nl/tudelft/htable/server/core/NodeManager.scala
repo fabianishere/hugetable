@@ -3,16 +3,16 @@ package nl.tudelft.htable.server.core
 import java.net.InetSocketAddress
 
 import akka.NotUsed
+import akka.actor.typed._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
-import akka.actor.typed._
 import akka.grpc.GrpcClientSettings
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import nl.tudelft.htable.core._
-import nl.tudelft.htable.protocol.InternalAdapters._
 import nl.tudelft.htable.protocol.ClientAdapters._
-import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest}
+import nl.tudelft.htable.protocol.InternalAdapters._
+import nl.tudelft.htable.protocol.client.ClientServiceClient
 import nl.tudelft.htable.protocol.internal.{AssignRequest, InternalServiceClient, PingRequest, QueryRequest}
 
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor}

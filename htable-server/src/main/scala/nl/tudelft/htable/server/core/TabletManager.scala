@@ -1,8 +1,8 @@
 package nl.tudelft.htable.server.core
 
-import akka.actor.typed.{Behavior, PostStop}
 import akka.actor.typed.scaladsl.Behaviors
-import nl.tudelft.htable.core.{Row, Tablet}
+import akka.actor.typed.{Behavior, PostStop}
+import nl.tudelft.htable.core.Tablet
 import nl.tudelft.htable.storage.StorageDriver
 
 /**

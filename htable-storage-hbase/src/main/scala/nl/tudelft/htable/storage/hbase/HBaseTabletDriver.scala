@@ -8,7 +8,7 @@ import akka.util.ByteString
 import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
-import org.apache.hadoop.hbase.client.{Append, Get, Put, Result, Scan}
+import org.apache.hadoop.hbase.client.{Get, Put, Scan}
 import org.apache.hadoop.hbase.regionserver.{HRegion, RegionScanner}
 import org.apache.hadoop.hbase.{Cell, CellBuilderFactory, CellBuilderType, CellUtil}
 

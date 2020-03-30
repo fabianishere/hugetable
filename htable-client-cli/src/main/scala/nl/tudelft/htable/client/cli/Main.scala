@@ -2,9 +2,8 @@ package nl.tudelft.htable.client.cli
 
 import akka.actor.ActorSystem
 import akka.stream.Materializer
-import akka.util.ByteString
 import nl.tudelft.htable.client.HTableClient
-import nl.tudelft.htable.core.{RowCell, RowMutation, RowRange, Scan}
+import nl.tudelft.htable.core.{RowRange, Scan}
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.rogach.scallop.{ScallopConf, ScallopOption}

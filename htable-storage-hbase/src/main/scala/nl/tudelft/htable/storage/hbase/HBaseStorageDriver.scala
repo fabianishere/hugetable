@@ -40,6 +40,8 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
       .setRegionId(System.currentTimeMillis())
       .setStartKey(tablet.range.start.toArray)
       .setEndKey(tablet.range.end.toArray)
+      .setSplit(false)
+      .setOffline(false)
       .build
 
     val WAL = factory.getWAL(info)

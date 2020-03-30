@@ -1,8 +1,6 @@
 package nl.tudelft.htable.server.core
 
-import java.util
 
-import akka.{Done, NotUsed}
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
@@ -12,7 +10,8 @@ import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.util.Timeout
-import nl.tudelft.htable.core.{Get, Node, Row, RowRange, Scan, Tablet}
+import akka.{Done, NotUsed}
+import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol.admin.AdminServiceHandler
 import nl.tudelft.htable.protocol.client.ClientServiceHandler
 import nl.tudelft.htable.protocol.internal.InternalServiceHandler
@@ -24,7 +23,6 @@ import org.apache.curator.framework.CuratorFramework
 import scala.collection.mutable
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
-import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success}
 
 object HTableServer {
@@ -107,7 +105,7 @@ object HTableServer {
               storageDriver: StorageDriver): Behavior[AnyRef] =
     Behaviors.setup { context =>
       val nodes = new mutable.HashSet[Node]()
-      val tablets = new util.TreeMap[Tablet, ActorRef[NodeManager.Command]]()
+      val tablets = new mutable.TreeMap[Tablet, ActorRef[NodeManager.Command]]()
       var root: Option[Node] = None
 
       Behaviors
@@ -131,15 +129,14 @@ object HTableServer {
             replyTo ! NodeManager.Pong(self)
             Behaviors.same
           case NodeManager.QueryTablets(replyTo) =>
-            replyTo ! NodeManager.QueryTabletsResponse(self, tablets.keySet().asScala.toSeq)
+            replyTo ! NodeManager.QueryTabletsResponse(self, tablets.keys.toSeq)
             Behaviors.same
           case NodeManager.Assign(newTablets) =>
-            tablets.forEach {
-              case (tablet, ref) =>
-                if (Tablet.isRoot(tablet)) {
-                  zkRef ! ZooKeeperManager.UnclaimRoot
-                }
-                context.stop(ref)
+            tablets.foreach { case (tablet, ref) =>
+              if (Tablet.isRoot(tablet)) {
+                zkRef ! ZooKeeperManager.UnclaimRoot
+              }
+              context.stop(ref)
             }
             tablets.clear()
 
@@ -155,29 +152,32 @@ object HTableServer {
           case NodeManager.Read(query, replyTo) =>
             query match {
               case Get(table, key) =>
-                Option(tablets.floorEntry(Tablet(table, RowRange.leftBounded(key)))) match {
-                  case Some(entry) => entry.getValue ! NodeManager.Read(query, replyTo)
+                tablets.rangeTo(Tablet(table, RowRange.leftBounded(key))).lastOption match {
+                  case Some((_, ref)) => ref ! NodeManager.Read(query, replyTo)
                   case None        =>
                 }
               case Scan(table, range, reversed) =>
                 implicit val timeout: Timeout = 3.seconds
                 implicit val sys: ActorSystem[Nothing] = context.system
 
-                val start = Tablet(table, range)
+                val start = Tablet(table, RowRange.leftBounded(range.start))
                 val end = Tablet(table, RowRange.leftBounded(range.end))
+                val submap = if (range.isUnbounded) tablets.rangeTo(end) else tablets.rangeUntil(end)
 
                 val source: Source[Row, NotUsed] =
-                  Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
-                    .map(entry => entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _)))
+                  Source(submap.toSeq.reverse)
+                    .takeWhile({ case (tablet, _) => Order.tabletOrdering.gt(tablet, start) }, inclusive = true)
+                    .map { case (_, ref) => ref.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _)) }
                     .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
                     .flatMapConcat(_.rows)
+
 
                 replyTo ! NodeManager.ReadResponse(source)
             }
             Behaviors.same
           case NodeManager.Mutate(mutation, replyTo) =>
-            Option(tablets.floorEntry(Tablet(mutation.table, RowRange.leftBounded(mutation.key)))) match {
-              case Some(entry) => entry.getValue ! NodeManager.Mutate(mutation, replyTo)
+            tablets.rangeTo(Tablet(mutation.table, RowRange.leftBounded(mutation.key))).lastOption match {
+              case Some((_, ref)) => ref ! NodeManager.Mutate(mutation, replyTo)
               case None        =>
             }
             Behaviors.same
@@ -212,7 +212,7 @@ object HTableServer {
   def master(self: Node,
              nodes: Set[Node],
              oldRoot: Option[Node],
-             tablets: util.TreeMap[Tablet, ActorRef[NodeManager.Command]],
+             tablets: mutable.TreeMap[Tablet, ActorRef[NodeManager.Command]],
              binding: Http.ServerBinding,
              zkRef: ActorRef[ZooKeeperManager.Command],
              storageDriver: StorageDriver): Behavior[AnyRef] =
@@ -263,15 +263,14 @@ object HTableServer {
             replyTo ! NodeManager.Pong(self)
             Behaviors.same
           case NodeManager.QueryTablets(replyTo) =>
-            replyTo ! NodeManager.QueryTabletsResponse(self, tablets.keySet().asScala.toSeq)
+            replyTo ! NodeManager.QueryTabletsResponse(self, tablets.keys.toSeq)
             Behaviors.same
           case NodeManager.Assign(newTablets) =>
-            tablets.forEach {
-              case (tablet, ref) =>
-                if (Tablet.isRoot(tablet)) {
-                  zkRef ! ZooKeeperManager.UnclaimRoot
-                }
-                context.stop(ref)
+            tablets.foreach { case (tablet, ref) =>
+              if (Tablet.isRoot(tablet)) {
+                zkRef ! ZooKeeperManager.UnclaimRoot
+              }
+              context.stop(ref)
             }
             tablets.clear()
 
@@ -287,30 +286,32 @@ object HTableServer {
           case NodeManager.Read(query, replyTo) =>
             query match {
               case Get(table, key) =>
-                Option(tablets.floorEntry(Tablet(table, RowRange.leftBounded(key)))) match {
-                  case Some(entry) => entry.getValue ! NodeManager.Read(query, replyTo)
+                tablets.rangeTo(Tablet(table, RowRange.leftBounded(key))).lastOption match {
+                  case Some((_, ref)) => ref ! NodeManager.Read(query, replyTo)
                   case None        =>
                 }
               case Scan(table, range, reversed) =>
                 implicit val timeout: Timeout = 3.seconds
                 implicit val sys: ActorSystem[Nothing] = context.system
 
-                val start = Tablet(table, range)
+                val start = Tablet(table, RowRange.leftBounded(range.start))
                 val end = Tablet(table, RowRange.leftBounded(range.end))
+                val submap = if (range.isUnbounded) tablets.rangeTo(end) else tablets.rangeUntil(end)
 
-                // TODO FIX REVERSE
                 val source: Source[Row, NotUsed] =
-                  Source(tablets.subMap(start, true, end, true).entrySet().asScala.toSeq)
-                    .map(entry => entry.getValue.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _)))
+                  Source(submap.toSeq.reverse)
+                    .takeWhile({ case (tablet, _) => Order.tabletOrdering.gt(tablet, start) }, inclusive = true)
+                    .map { case (_, ref) => ref.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _)) }
                     .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
                     .flatMapConcat(_.rows)
+
 
                 replyTo ! NodeManager.ReadResponse(source)
             }
             Behaviors.same
           case NodeManager.Mutate(mutation, replyTo) =>
-            Option(tablets.floorEntry(Tablet(mutation.table, RowRange.leftBounded(mutation.key)))) match {
-              case Some(entry) => entry.getValue ! NodeManager.Mutate(mutation, replyTo)
+            tablets.rangeTo(Tablet(mutation.table, RowRange.leftBounded(mutation.key))).lastOption match {
+              case Some((_, ref)) => ref ! NodeManager.Mutate(mutation, replyTo)
               case None        =>
             }
             Behaviors.same

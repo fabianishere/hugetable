@@ -4,7 +4,6 @@ import java.io.File
 import java.util.UUID
 
 import akka.actor.typed.ActorSystem
-import com.sun.security.auth.module.UnixSystem
 import com.typesafe.config.ConfigFactory
 import nl.tudelft.htable.server.core.HTableServer
 import nl.tudelft.htable.storage.hbase.HBaseStorageDriver
@@ -12,7 +11,6 @@ import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hdfs.MiniDFSCluster
-import org.apache.hadoop.test.PathUtils
 import org.rogach.scallop.{ScallopConf, ScallopOption}
 
 import scala.collection.Seq

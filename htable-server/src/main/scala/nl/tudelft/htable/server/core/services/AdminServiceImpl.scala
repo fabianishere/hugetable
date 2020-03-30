@@ -1,13 +1,12 @@
 package nl.tudelft.htable.server.core.services
 
 import akka.Done
-import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.ActorContext
+import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.{ActorSystem, DispatcherSelector}
 import akka.util.Timeout
-import nl.tudelft.htable.protocol.admin.{AdminService, CreateTableRequest, CreateTableResponse, DeleteTableRequest, DeleteTableResponse}
-import nl.tudelft.htable.protocol.internal.QueryResponse
-import nl.tudelft.htable.server.core.{HTableServer, NodeManager}
+import nl.tudelft.htable.protocol.admin._
+import nl.tudelft.htable.server.core.HTableServer
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
