@@ -34,4 +34,9 @@ private[htable] class AdminServiceImpl(context: ActorContext[AnyRef])(implicit v
     context.self
       .ask[Done](ref => HTableServer.DeleteTable(in.tableName, ref))
       .map(_ => DeleteTableResponse())
+
+  /**
+   * Split a table in the cluster.
+   */
+  override def splitTable(in: SplitTableRequest): Future[SplitTableResponse] = Future.failed(new NotImplementedError())
 }

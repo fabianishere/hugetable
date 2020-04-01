@@ -229,6 +229,7 @@ object HTableServer {
 
       // Spawn the load balancer
       val loadBalancer = context.spawn(LoadBalancer(), name = "load-balancer")
+      context.watch(loadBalancer)
       loadBalancer ! LoadBalancer.Start(nodeRefs.toMap)
 
       Behaviors
@@ -331,6 +332,8 @@ object HTableServer {
         .receiveSignal {
           case (_, Terminated(ref)) if ref == zkRef =>
             throw new IllegalStateException("ZooKeeper actor has terminated")
+          case (_, Terminated(ref)) if ref == loadBalancer =>
+            throw new IllegalStateException("Load balancer failed")
           case (_, PostStop) =>
             context.log.info("HugeTable server stopping")
             binding.terminate(10.seconds)

@@ -12,7 +12,7 @@ import akka.{Done, NotUsed}
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol.ClientAdapters._
 import nl.tudelft.htable.protocol.CoreAdapters
-import nl.tudelft.htable.protocol.admin.{AdminServiceClient, CreateTableRequest, DeleteTableRequest}
+import nl.tudelft.htable.protocol.admin.{AdminServiceClient, CreateTableRequest, DeleteTableRequest, SplitTableRequest}
 import nl.tudelft.htable.protocol.client.ClientServiceClient
 import org.apache.curator.framework.CuratorFramework
 
@@ -27,13 +27,25 @@ trait HTableClient {
 
   /**
    * Create a new table.
+   *
+   * @param name The name of the table to create.
    */
   def create(name: String): Future[Done]
 
   /**
    * Delete a table.
+   *
+   * @param name The name of the table to delete.
    */
   def delete(name: String): Future[Done]
+
+  /**
+   * Split a table in the database.
+   *
+   * @param name The name of table to split.
+   * @param startKey The start key of the tablet to target.
+   */
+  def split(name: String, startKey: ByteString): Future[Done]
 
   /**
    * Query the rows of a table.
@@ -91,6 +103,13 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework, private 
     val client = openAdmin()
     client
       .deleteTable(DeleteTableRequest(name))
+      .map(_ => Done)
+  }
+
+  override def split(name: String, startKey: ByteString): Future[Done] = {
+    val client = openAdmin()
+    client
+      .splitTable(SplitTableRequest(name, CoreAdapters.akkaToProtobuf(startKey)))
       .map(_ => Done)
   }
 
