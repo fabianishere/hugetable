@@ -45,10 +45,11 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
       .build
 
     val WAL = factory.getWAL(info)
-    val region = if (open)
-      HRegion.openHRegion(conf, FileSystem.get(conf), rootDir, info, tableDescriptor, WAL)
-    else
-      HRegion.createHRegion(info, rootDir, conf, tableDescriptor, WAL, true)
+    val region =
+      if (open)
+        HRegion.openHRegion(conf, FileSystem.get(conf), rootDir, info, tableDescriptor, WAL)
+      else
+        HRegion.createHRegion(info, rootDir, conf, tableDescriptor, WAL, true)
     new HBaseTabletDriver(region, tablet)
   }
 

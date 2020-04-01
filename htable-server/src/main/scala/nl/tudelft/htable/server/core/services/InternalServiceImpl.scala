@@ -15,7 +15,7 @@ import scala.concurrent.{ExecutionContext, Future}
  * Implementation of the gRPC [InternalService].
  */
 private[htable] class InternalServiceImpl(context: ActorContext[AnyRef])(implicit val sys: ActorSystem[Nothing])
-  extends InternalService {
+    extends InternalService {
   // asking someone requires a timeout if the timeout hits without response
   // the ask is failed with a TimeoutException
   implicit val timeout: Timeout = 3.second

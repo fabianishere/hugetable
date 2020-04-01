@@ -1,6 +1,5 @@
 package nl.tudelft.htable.server.core
 
-
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
@@ -132,11 +131,12 @@ object HTableServer {
             replyTo ! NodeManager.QueryTabletsResponse(self, tablets.keys.toSeq)
             Behaviors.same
           case NodeManager.Assign(newTablets) =>
-            tablets.foreach { case (tablet, ref) =>
-              if (Tablet.isRoot(tablet)) {
-                zkRef ! ZooKeeperManager.UnclaimRoot
-              }
-              context.stop(ref)
+            tablets.foreach {
+              case (tablet, ref) =>
+                if (Tablet.isRoot(tablet)) {
+                  zkRef ! ZooKeeperManager.UnclaimRoot
+                }
+                context.stop(ref)
             }
             tablets.clear()
 
@@ -154,7 +154,7 @@ object HTableServer {
               case Get(table, key) =>
                 tablets.rangeTo(Tablet(table, RowRange.leftBounded(key))).lastOption match {
                   case Some((_, ref)) => ref ! NodeManager.Read(query, replyTo)
-                  case None        =>
+                  case None           =>
                 }
               case Scan(table, range, reversed) =>
                 implicit val timeout: Timeout = 3.seconds
@@ -167,10 +167,12 @@ object HTableServer {
                 val source: Source[Row, NotUsed] =
                   Source(submap.toSeq.reverse)
                     .takeWhile({ case (tablet, _) => Order.tabletOrdering.gt(tablet, start) }, inclusive = true)
-                    .map { case (_, ref) => ref.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _)) }
+                    .map {
+                      case (_, ref) =>
+                        ref.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _))
+                    }
                     .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
                     .flatMapConcat(_.rows)
-
 
                 replyTo ! NodeManager.ReadResponse(source)
             }
@@ -178,7 +180,7 @@ object HTableServer {
           case NodeManager.Mutate(mutation, replyTo) =>
             tablets.rangeTo(Tablet(mutation.table, RowRange.leftBounded(mutation.key))).lastOption match {
               case Some((_, ref)) => ref ! NodeManager.Mutate(mutation, replyTo)
-              case None        =>
+              case None           =>
             }
             Behaviors.same
           case CreateTable(_, replyTo) =>
@@ -266,11 +268,12 @@ object HTableServer {
             replyTo ! NodeManager.QueryTabletsResponse(self, tablets.keys.toSeq)
             Behaviors.same
           case NodeManager.Assign(newTablets) =>
-            tablets.foreach { case (tablet, ref) =>
-              if (Tablet.isRoot(tablet)) {
-                zkRef ! ZooKeeperManager.UnclaimRoot
-              }
-              context.stop(ref)
+            tablets.foreach {
+              case (tablet, ref) =>
+                if (Tablet.isRoot(tablet)) {
+                  zkRef ! ZooKeeperManager.UnclaimRoot
+                }
+                context.stop(ref)
             }
             tablets.clear()
 
@@ -288,7 +291,7 @@ object HTableServer {
               case Get(table, key) =>
                 tablets.rangeTo(Tablet(table, RowRange.leftBounded(key))).lastOption match {
                   case Some((_, ref)) => ref ! NodeManager.Read(query, replyTo)
-                  case None        =>
+                  case None           =>
                 }
               case Scan(table, range, reversed) =>
                 implicit val timeout: Timeout = 3.seconds
@@ -301,10 +304,12 @@ object HTableServer {
                 val source: Source[Row, NotUsed] =
                   Source(submap.toSeq.reverse)
                     .takeWhile({ case (tablet, _) => Order.tabletOrdering.gt(tablet, start) }, inclusive = true)
-                    .map { case (_, ref) => ref.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _)) }
+                    .map {
+                      case (_, ref) =>
+                        ref.ask[NodeManager.ReadResponse](NodeManager.Read(Scan(table, range, reversed), _))
+                    }
                     .flatMapConcat[NodeManager.ReadResponse, NotUsed](Source.future)
                     .flatMapConcat(_.rows)
-
 
                 replyTo ! NodeManager.ReadResponse(source)
             }
@@ -312,7 +317,7 @@ object HTableServer {
           case NodeManager.Mutate(mutation, replyTo) =>
             tablets.rangeTo(Tablet(mutation.table, RowRange.leftBounded(mutation.key))).lastOption match {
               case Some((_, ref)) => ref ! NodeManager.Mutate(mutation, replyTo)
-              case None        =>
+              case None           =>
             }
             Behaviors.same
           case CreateTable(_, replyTo) =>

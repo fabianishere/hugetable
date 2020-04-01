@@ -15,7 +15,7 @@ import scala.concurrent.{ExecutionContext, Future}
  * Implementation of the gRPC [AdminService].
  */
 private[htable] class AdminServiceImpl(context: ActorContext[AnyRef])(implicit val sys: ActorSystem[Nothing])
-  extends AdminService {
+    extends AdminService {
   implicit val timeout: Timeout = 3.seconds
   implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
 

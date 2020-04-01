@@ -27,7 +27,7 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
 
     for (cellMutation <- mutation.mutations) {
       put.add(cellMutation match {
-        case Mutation.PutCell(cell) => toHBase(mutation.key, cell, Cell.Type.Put)
+        case Mutation.PutCell(cell)    => toHBase(mutation.key, cell, Cell.Type.Put)
         case Mutation.DeleteCell(cell) => toHBase(mutation.key, cell, Cell.Type.DeleteColumn)
         case Mutation.Delete =>
           val res = CellBuilderFactory.create(CellBuilderType.SHALLOW_COPY)

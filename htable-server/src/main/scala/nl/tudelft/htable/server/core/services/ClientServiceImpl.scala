@@ -18,7 +18,7 @@ import scala.concurrent.{ExecutionContext, Future}
  * Implementation of the gRPC [ClientService].
  */
 private[htable] class ClientServiceImpl(context: ActorContext[AnyRef])(implicit val sys: ActorSystem[Nothing])
-  extends ClientService {
+    extends ClientService {
   implicit val timeout: Timeout = 3.seconds
   implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
 

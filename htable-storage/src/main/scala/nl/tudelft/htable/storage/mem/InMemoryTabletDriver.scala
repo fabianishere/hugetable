@@ -27,7 +27,7 @@ private[mem] class InMemoryTabletDriver(override val tablet: Tablet) extends Tab
 
     for (cellMutation <- mutation.mutations) {
       cellMutation match {
-        case Mutation.PutCell(cell) => cells += cell
+        case Mutation.PutCell(cell)    => cells += cell
         case Mutation.DeleteCell(cell) => cells -= cell
         case Mutation.Delete           => cells.clear()
       }
@@ -57,10 +57,7 @@ private[mem] class InMemoryTabletDriver(override val tablet: Tablet) extends Tab
               map.rangeFrom(range.start)
 
           if (reversed) {
-            submap
-              .values
-              .toSeq
-              .reverseIterator
+            submap.values.toSeq.reverseIterator
           } else {
             submap.valuesIterator
           }
