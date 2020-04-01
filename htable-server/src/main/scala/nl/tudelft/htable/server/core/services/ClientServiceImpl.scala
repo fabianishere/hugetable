@@ -26,18 +26,30 @@ private[htable] class ClientServiceImpl(context: ActorContext[AnyRef])(implicit 
    * Read the specified row (range) and stream back the response.
    */
   override def read(in: ReadRequest): Source[ReadResponse, NotUsed] = {
-    Source
-      .future(context.self.ask[NodeManager.ReadResponse](ref => NodeManager.Read(in, ref)))
-      .flatMapConcat(_.rows)
-      .map(row => ReadResponse(cells = row.cells.map(cell => ClientAdapters.cellToProtobuf(row, cell))))
+    in.query match {
+      case Some(value) =>
+        Source
+          .future(context.self.ask[NodeManager.ReadResponse](ref => NodeManager.Read(value, ref)))
+          .flatMapConcat(_.rows)
+          .grouped(5)
+          .map(rows => ReadResponse(rows))
+      case None =>
+        Source.empty
+    }
+
   }
 
   /**
    * Mutate a specified row in a table.
    */
   override def mutate(in: MutateRequest): Future[MutateResponse] = {
-    context.self
-      .ask[NodeManager.MutateResponse.type](NodeManager.Mutate(in, _))
-      .map(_ => MutateResponse())
+    in.mutation match {
+      case Some(value) =>
+        context.self
+          .ask[NodeManager.MutateResponse.type](NodeManager.Mutate(value, _))
+          .map(_ => MutateResponse())
+      case None =>
+        Future.successful(MutateResponse())
+    }
   }
 }

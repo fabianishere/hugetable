@@ -3,15 +3,29 @@ syntax = "proto3";
 option java_multiple_files = true;
 option java_package = "nl.tudelft.htable.protocol.client";
 
-// A contiguous range of rows.
-message RowRange {
-    // The row key at which to start the range (inclusive).
-    // If the field is not given, it is interpreted as the empty string, inclusive.
-    bytes start_key = 1;
+import "scalapb/scalapb.proto";
+import "Base.proto";
 
-    // The row key at which to end the range (inclusive).
-    // If the field is not set, interpreted as the infinite row key, exclusive.
-    bytes end_key = 2;
+package nl.tudelft.htable.protocol.client;
+
+// A query of the data in a table.
+message Query {
+    option (scalapb.message).type = "nl.tudelft.htable.core.Query";
+
+    // The unique name of the table from which to read.
+    string table_name = 1;
+
+    // The (range of) row keys to read from.
+    oneof rows {
+        // Single row included in the set.
+        bytes row_key = 2;
+
+        // Contiguous row range included in the set.
+        RowRange row_range = 3;
+    }
+
+    // A flag to indicate the scan should be reversed.
+    bool reversed = 4;
 }
 
 // A particular change to be made to the contents of a row.
@@ -56,49 +70,10 @@ message Mutation {
     }
 }
 
-// Request message for ClientService.Read.
-message ReadRequest {
-    // The unique name of the table from which to read.
-    string table_name = 1;
+// A mutation of a single row.
+message RowMutation {
+    option (scalapb.message).type = "nl.tudelft.htable.core.RowMutation";
 
-    // The (range of) row keys to read from.
-    oneof rows {
-        // Single row included in the set.
-        bytes row_key = 2;
-
-        // Contiguous row range included in the set.
-        RowRange row_range = 3;
-    }
-
-    // A flag to indicate the scan should be reversed.
-    bool reversed = 4;
-}
-
-// Response message for ClientService.Read.
-message ReadResponse {
-    // A piece of a row's contents returned as part of the read
-    // response stream.
-    message RowCell {
-        // The row key for this cell.
-        bytes row_key = 1;
-
-        // The cell's qualifier (column name).
-        bytes qualifier = 2;
-
-        // The cell's stored timestamp in milliseconds, which also uniquely identifies it
-        // within its column.
-        int64 timestamp = 3;
-
-        // The value stored in the cell.
-        bytes value = 4;
-    }
-
-    // The cells contained in this response.
-    repeated RowCell cells = 1;
-}
-
-// Request message for ClientService.Mutate.
-message MutateRequest {
     // The unique name of the table to mutate.
     string table_name = 1;
 
@@ -110,8 +85,34 @@ message MutateRequest {
     repeated Mutation mutations = 3;
 }
 
+// Request message for ClientService.Read.
+message ReadRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.client.ClientRequest";
+
+    // The query for this request.
+    Query query = 1;
+}
+
+// Response message for ClientService.Read.
+message ReadResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.client.ClientResponse";
+
+    // The rows contained in this response.
+    repeated Row rows = 1;
+}
+
+// Request message for ClientService.Mutate.
+message MutateRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.client.ClientRequest";
+
+    // The row mutation to perform.
+    RowMutation mutation = 1;
+}
+
 // Response message for ClientService.Mutate.
-message MutateResponse {}
+message MutateResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.client.ClientResponse";
+}
 
 service ClientService {
     // Read the specified row (range) and stream back the response.

@@ -6,5 +6,5 @@ plugins {
 }
 
 dependencies {
-    api("com.typesafe.akka:akka-actor-typed_${Library.SCALA_LIB}:${Library.AKKA}")
+    api("com.typesafe.akka:akka-stream_${Library.SCALA_LIB}:${Library.AKKA}")
 }

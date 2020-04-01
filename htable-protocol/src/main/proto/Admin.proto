@@ -3,6 +3,11 @@ syntax = "proto3";
 option java_multiple_files = true;
 option java_package = "nl.tudelft.htable.protocol.admin";
 
+import "scalapb/scalapb.proto";
+import "Base.proto";
+
+package protocol.admin;
+
 // Request message for [AdminService.CreateTable].
 message CreateTableRequest {
     // The name by which the new table should be referred to within the cluster.

@@ -20,11 +20,11 @@ protobuf {
         val assemblySuffix = if (SystemUtils.IS_OS_WINDOWS) "bat" else "jar"
         val assemblyClassifier = if (SystemUtils.IS_OS_WINDOWS) "bat" else "assembly"
 
-        id("akkaGrpc") {
-            artifact = "com.lightbend.akka.grpc:akka-grpc-codegen_2.12:${Library.AKKA_GRPC}:${assemblyClassifier}@${assemblySuffix}"
-        }
         id("scalapb") {
             artifact = "com.lightbend.akka.grpc:akka-grpc-scalapb-protoc-plugin_2.12:${Library.AKKA_GRPC}:${assemblyClassifier}@${assemblySuffix}"
+        }
+        id("akkaGrpc") {
+            artifact = "com.lightbend.akka.grpc:akka-grpc-codegen_2.12:${Library.AKKA_GRPC}:${assemblyClassifier}@${assemblySuffix}"
         }
     }
     generateProtoTasks {
@@ -33,14 +33,15 @@ protobuf {
                 remove("java")
             }
             it.plugins {
+                id("scalapb") {
+                    option("flat_package")
+                }
+
                 id("akkaGrpc") {
                     option("language=scala")
                     // TODO Figure out a way to allow the consumer to specify these options
                     option("generate_client=true")
                     option("generate_server=true")
-                    option("flat_package")
-                }
-                id("scalapb") {
                     option("flat_package")
                 }
             }

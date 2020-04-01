@@ -9,11 +9,9 @@ import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
 import akka.grpc.GrpcClientSettings
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
-import akka.util.ByteString
 import nl.tudelft.htable.core._
-import nl.tudelft.htable.protocol.ClientAdapters._
 import nl.tudelft.htable.protocol.InternalAdapters._
-import nl.tudelft.htable.protocol.client.ClientServiceClient
+import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
 import nl.tudelft.htable.protocol.internal.{AssignRequest, InternalServiceClient, PingRequest, QueryRequest}
 
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor}
@@ -105,10 +103,10 @@ object NodeManager {
           internalClient.assign(AssignRequest(tablets = tablets.map(t => t)))
           Behaviors.same
         case Read(query, replyTo) =>
-          replyTo ! ReadResponse(client.read(query))
+          replyTo ! ReadResponse(client.read(ReadRequest(Some(query))).mapConcat(_.rows))
           Behaviors.same
         case Mutate(mutation, replyTo) =>
-          client.mutate(mutation).onComplete {
+          client.mutate(MutateRequest(Some(mutation))).onComplete {
             case Success(_)         => replyTo ! NodeManager.MutateResponse
             case Failure(exception) => context.log.error("Failure to run mutation", exception)
           }

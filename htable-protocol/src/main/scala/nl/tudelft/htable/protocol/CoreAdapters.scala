@@ -4,6 +4,8 @@ import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, 
 import java.net.InetSocketAddress
 
 import akka.util.ByteString
+import com.google.protobuf
+import scalapb.TypeMapper
 
 import scala.language.implicitConversions
 
@@ -11,6 +13,7 @@ import scala.language.implicitConversions
  * Core adapters used for the conversion between core classes and Protobuf classes.
  */
 object CoreAdapters {
+
   /**
    * Serialize an [InetSocketAddress] to a byte string.
    */

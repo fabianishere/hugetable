@@ -1,66 +1,90 @@
 package nl.tudelft.htable.protocol
 
-import akka.NotUsed
-import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
-import nl.tudelft.htable.protocol.CoreAdapters._
+import nl.tudelft.htable.protocol
 import nl.tudelft.htable.protocol.client.Mutation.{DeleteFromColumn, DeleteFromRow, SetCell}
-import nl.tudelft.htable.protocol.client.{MutateRequest, ReadRequest, ReadResponse, Mutation => PBMutation, RowRange => PBRowRange}
 
-import scala.collection.mutable
 import scala.language.implicitConversions
 
 /**
  * Conversions between core classes and Protobuf objects.
  */
 object ClientAdapters {
-
   /**
-   * Convert the specified [Query] to a [ReadRequest].
+   * Convert the specified [Query] to a [protocol.client.Query].
    */
-  implicit def queryToProtobuf(query: Query): ReadRequest = {
+  private[protocol] def queryToProtobuf(query: Query): protocol.client.Query = {
     query match {
-      case Get(table, key) => ReadRequest(table, rows = ReadRequest.Rows.RowKey(key))
+      case Get(table, key) => protocol.client.Query(table, rows = protocol.client.Query.Rows.RowKey(key))
       case Scan(table, range, reversed) =>
-        ReadRequest(table, reversed = reversed, rows = ReadRequest.Rows.RowRange(PBRowRange(range.start, range.end)))
+        protocol.client.Query(table, reversed = reversed, rows = protocol.client.Query.Rows.RowRange(range))
     }
   }
 
   /**
-   * Convert the specified [ReadRequest] to a [Query].
+   * Convert the specified [protocol.client.Query] to a [Query].
    */
-  implicit def queryToCore(request: ReadRequest): Query = {
+  private[protocol] def queryToCore(request: protocol.client.Query): Query = {
     request.rows match {
-      case ReadRequest.Rows.RowKey(key)                         => Get(request.tableName, key)
-      case ReadRequest.Rows.RowRange(PBRowRange(start, end, _)) => Scan(request.tableName, RowRange(start, end))
-      case ReadRequest.Rows.Empty                               => throw new IllegalArgumentException("Empty query")
+      case protocol.client.Query.Rows.RowKey(key)                         => Get(request.tableName, key)
+      case protocol.client.Query.Rows.RowRange(range) => Scan(request.tableName, range, request.reversed)
+      case protocol.client.Query.Rows.Empty                               => throw new IllegalArgumentException("Empty query")
     }
   }
 
   /**
-   * Convert the specified [RowMutation] to a [MutateRequest].
+   * Convert the specified [Row] to a [protocol.Row].
    */
-  implicit def mutationToProtobuf(mutation: RowMutation): MutateRequest = {
-    val mutations: List[PBMutation] = mutation.mutations.reverse
+  private[protocol] def rowToProtobuf(row: Row): protocol.Row = protocol.Row(rowKey = row.key, cells = row.cells)
+
+  /**
+   * Convert the specified [protocol.Row] to a [Row].
+   */
+  private[protocol] def rowToCore(res: protocol.Row): Row = Row(res.rowKey, res.cells)
+
+  /**
+   * Convert the specified [RowCell] to a [protocol.RowCell].
+   */
+  private[protocol] def cellToProtobuf(cell: RowCell): protocol.RowCell = protocol.RowCell(qualifier = cell.qualifier, timestamp = cell.timestamp, value = cell.value)
+
+  /**
+   * Convert the specified [protocol.RowCell] to a [RowCell].
+   */
+  private[protocol] def cellToCore(cell: protocol.RowCell): RowCell = RowCell(cell.qualifier, cell.timestamp, cell.value)
+
+  /**
+   * Convert the specified [RowRange] to a [protocol.RowRange].
+   */
+  private[protocol] def rowRangeToProtobuf(range: RowRange): protocol.RowRange = protocol.RowRange(range.start, range.end)
+
+  /**
+   * Convert the specified [protocol.RowRange] to a [RowRange].
+   */
+  private[protocol] def rowRangeToCore(range: protocol.RowRange): RowRange = RowRange(range.startKey, range.endKey)
+
+  /**
+   * Convert the specified [RowMutation] to a [protocol.client.RowMutation].
+   */
+  private[protocol] def mutationToProtobuf(mutation: RowMutation): protocol.client.RowMutation = {
+    val mutations: List[protocol.client.Mutation] = mutation.mutations.reverse
       .map {
         case Mutation.PutCell(cell) =>
-          PBMutation.Mutation.SetCell(SetCell(cell.qualifier, cell.timestamp, cell.value))
+          protocol.client.Mutation.Mutation.SetCell(SetCell(cell.qualifier, cell.timestamp, cell.value))
         case Mutation.DeleteCell(cell) =>
-          PBMutation.Mutation.DeleteFromColumn(DeleteFromColumn(cell.qualifier, cell.timestamp))
+          protocol.client.Mutation.Mutation.DeleteFromColumn(DeleteFromColumn(cell.qualifier, cell.timestamp))
         case Mutation.Delete =>
-          PBMutation.Mutation.DeleteFromRow(DeleteFromRow())
+          protocol.client.Mutation.Mutation.DeleteFromRow(DeleteFromRow())
       }
-      .map[PBMutation](mut => PBMutation(mut))
-    MutateRequest(tableName = mutation.table, rowKey = mutation.key, mutations)
+        .map(mut => protocol.client.Mutation(mut))
+    protocol.client.RowMutation(tableName = mutation.table, rowKey = mutation.key, mutations)
   }
 
   /**
-   * Convert a [MutateRequest] to [RowMutation]
+   * Convert a [protocol.client.RowMutation] to [RowMutation]
    */
-  implicit def mutationToCore(mutateRequest: MutateRequest): RowMutation = {
-    val mutations = mutateRequest.mutations.flatMap[Mutation] { mutation =>
+  private[protocol] def mutationToCore(rowMutation: protocol.client.RowMutation): RowMutation = {
+    val mutations = rowMutation.mutations.flatMap[Mutation] { mutation =>
       if (mutation.mutation.isSetCell) {
         val cell = mutation.mutation.setCell.head
         Some(Mutation.PutCell(RowCell(cell.qualifier, cell.timestamp, cell.value)))
@@ -74,41 +98,7 @@ object ClientAdapters {
       }
     }
 
-    RowMutation(mutateRequest.tableName, mutateRequest.rowKey)
+    RowMutation(rowMutation.tableName, rowMutation.rowKey)
       .copy(mutations = mutations.toList)
   }
-
-  /**
-   * Convert the source of [ReadResponse]s into a source of [Row]s.
-   */
-  implicit def readToCore(source: Source[ReadResponse, NotUsed]): Source[Row, NotUsed] = {
-    source
-      .mapConcat(_.cells)
-      .statefulMapConcat { () =>
-        var currentRowKey = com.google.protobuf.ByteString.EMPTY
-
-        {
-          cell: ReadResponse.RowCell =>
-            val newRow = cell.rowKey != currentRowKey
-            if (newRow)
-              currentRowKey = cell.rowKey
-            List((cell, newRow))
-        }
-      }
-      .splitWhen(_._2)
-      .map(_._1)
-      .fold((ByteString.empty, mutable.ListBuffer[RowCell]())) { case ((_, cells), cell) =>
-        val rowCell = RowCell(cell.qualifier, cell.timestamp, cell.value)
-        cells.addOne(implicitly[RowCell](rowCell))
-        (cell.rowKey, cells)
-      }
-      .map { case (key, cells) => core.Row(key, cells.toSeq) }
-      .concatSubstreams
-  }
-
-  /**
-   * Convert a [Cell] to a Protobuf cell.
-   */
-  def cellToProtobuf(row: Row, cell: RowCell): ReadResponse.RowCell =
-    ReadResponse.RowCell(rowKey = row.key, qualifier = cell.qualifier, timestamp = cell.timestamp, value = cell.value)
 }
