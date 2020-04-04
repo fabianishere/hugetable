@@ -12,6 +12,7 @@ dependencies {
     api("org.apache.curator:curator-framework:${Library.CURATOR}")
 
     implementation(project(":htable-protocol"))
+    implementation(project(":htable-client"))
     implementation("org.apache.curator:curator-recipes:${Library.CURATOR}")
 }
 

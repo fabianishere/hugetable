@@ -10,18 +10,24 @@ package protocol.admin;
 
 // Request message for [AdminService.CreateTable].
 message CreateTableRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.admin.AdminRequest";
+
     // The name by which the new table should be referred to within the cluster.
     string table_name = 1;
 }
 
 // Request message for [AdminService.DeleteTable].
 message DeleteTableRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.admin.AdminRequest";
+
     // The name of the table to delete.
     string table_name = 1;
 }
 
 // Request message for [AdminService.SplitTable].
 message SplitTableRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.admin.AdminRequest";
+
     // The name of the table to split.
     string table_name = 1;
 
@@ -30,13 +36,19 @@ message SplitTableRequest {
 }
 
 // Response message for [AdminService.CreateTable]
-message CreateTableResponse {}
+message CreateTableResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.admin.AdminResponse";
+}
 
 // Response message for [AdminService.DeleteTable]
-message DeleteTableResponse {}
+message DeleteTableResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.admin.AdminResponse";
+}
 
 // Response message for [AdminService.SplitTable]
-message SplitTableResponse {}
+message SplitTableResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.admin.AdminResponse";
+}
 
 service AdminService {
     // Create a new table in the cluster.

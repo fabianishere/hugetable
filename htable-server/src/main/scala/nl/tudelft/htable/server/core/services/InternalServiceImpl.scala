@@ -1,20 +1,19 @@
 package nl.tudelft.htable.server.core.services
 
-import akka.actor.typed.scaladsl.ActorContext
-import akka.actor.typed.scaladsl.AskPattern._
-import akka.actor.typed.{ActorSystem, DispatcherSelector}
+import akka.Done
+import akka.actor.typed.{ActorRef, ActorSystem, DispatcherSelector}
 import akka.util.Timeout
-import nl.tudelft.htable.protocol.InternalAdapters._
+import nl.tudelft.htable.core.Tablet
 import nl.tudelft.htable.protocol.internal._
-import nl.tudelft.htable.server.core.NodeManager
+import nl.tudelft.htable.server.core.NodeActor
 
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext, Future, Promise}
 
 /**
  * Implementation of the gRPC [InternalService].
  */
-private[htable] class InternalServiceImpl(context: ActorContext[AnyRef])(implicit val sys: ActorSystem[Nothing])
+private[htable] class InternalServiceImpl(handler: ActorRef[NodeActor.Command])(implicit val sys: ActorSystem[Nothing])
     extends InternalService {
   // asking someone requires a timeout if the timeout hits without response
   // the ask is failed with a TimeoutException
@@ -22,23 +21,29 @@ private[htable] class InternalServiceImpl(context: ActorContext[AnyRef])(implici
   implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
 
   /**
-   * Ping a self in the cluster.
+   * Ping a node in the cluster.
    */
-  override def ping(in: PingRequest): Future[PingResponse] = context.self.ask(NodeManager.Ping).map(_ => PingResponse())
+  override def ping(in: PingRequest): Future[PingResponse] = {
+    val promise = Promise[Done]
+    handler ! NodeActor.Ping(promise)
+    promise.future.map(_ => PingResponse())
+  }
 
   /**
-   * QueryTablets a self for the tablets it's serving.
+   * Query a node for the tablets it's serving.
    */
-  override def query(in: QueryRequest): Future[QueryResponse] =
-    context.self
-      .ask(NodeManager.QueryTablets)
-      .map(res => QueryResponse(res.tablets.map(t => t)))
+  override def report(in: ReportRequest): Future[ReportResponse] = {
+    val promise = Promise[Seq[Tablet]]
+    handler ! NodeActor.Report(promise)
+    promise.future.map(tablets => ReportResponse(tablets))
+  }
 
   /**
-   * Assign the specified tablets to the self.
+   * Assign the specified tablets to the node.
    */
   override def assign(in: AssignRequest): Future[AssignResponse] = {
-    context.self ! NodeManager.Assign(in.tablets.map(t => t))
-    Future.successful(AssignResponse())
+    val promise = Promise[Done]
+    handler ! NodeActor.Assign(in.tablets, promise)
+    promise.future.map(_ => AssignResponse())
   }
 }

@@ -5,8 +5,7 @@ import java.util.concurrent.ConcurrentHashMap
 import nl.tudelft.htable.core.Node
 import nl.tudelft.htable.protocol.admin.AdminServiceClient
 import nl.tudelft.htable.protocol.client.ClientServiceClient
-
-import scala.collection.mutable
+import nl.tudelft.htable.protocol.internal.InternalServiceClient
 
 /**
  * A service resolver which caches the clients.
@@ -14,6 +13,8 @@ import scala.collection.mutable
 class CachingServiceResolver(val delegate: ServiceResolver) extends ServiceResolver {
   private val clientCache = new ConcurrentHashMap[Node, ClientServiceClient]
   private val adminCache = new ConcurrentHashMap[Node, AdminServiceClient]
+  private val internalCache = new ConcurrentHashMap[Node, InternalServiceClient]
+
 
   override def openClient(node: Node): ClientServiceClient = {
     clientCache.computeIfAbsent(node, node => delegate.openClient(node))
@@ -23,8 +24,11 @@ class CachingServiceResolver(val delegate: ServiceResolver) extends ServiceResol
     adminCache.computeIfAbsent(node, node => delegate.openAdmin(node))
   }
 
-  override def close(): Unit = {
+  override def openInternal(node: Node): InternalServiceClient = {
+    internalCache.computeIfAbsent(node, node => delegate.openInternal(node))
+  }
 
+  override def close(): Unit = {
     clientCache.forEach { (_, client) =>
       client.close()
     }
@@ -33,5 +37,9 @@ class CachingServiceResolver(val delegate: ServiceResolver) extends ServiceResol
       client.close()
     }
     adminCache.clear()
+    internalCache.forEach { (_, client) =>
+      client.close()
+    }
+    internalCache.clear()
   }
 }

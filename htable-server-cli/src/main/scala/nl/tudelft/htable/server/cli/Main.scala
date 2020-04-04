@@ -1,10 +1,12 @@
 package nl.tudelft.htable.server.cli
 
+import java.net.InetSocketAddress
 import java.util.UUID
 
 import akka.actor.typed.ActorSystem
 import com.typesafe.config.ConfigFactory
-import nl.tudelft.htable.server.core.HTableServer
+import nl.tudelft.htable.core.Node
+import nl.tudelft.htable.server.core.HTableActor
 import nl.tudelft.htable.storage.hbase.HBaseStorageDriver
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
@@ -40,8 +42,10 @@ object Main {
     hconf.set("fs.defaultFS", "hdfs://localhost:9000")
     val fs = FileSystem.get(hconf)
 
+
+    val node = Node(UUID.randomUUID().toString, new InetSocketAddress("localhost", conf.port()))
     val driver = new HBaseStorageDriver(fs)
-    ActorSystem(HTableServer(UUID.randomUUID().toString, zookeeper, driver), "htable", actorConf)
+    ActorSystem(HTableActor(node, zookeeper, driver), "htable", actorConf)
   }
 
   /**
@@ -58,6 +62,13 @@ object Main {
       short = 'z',
       descr = "The ZooKeeper addresses to connect to",
       default = Properties.envOrNone("ZOOKEEPER").map(e => List(e)))
+
+    /**
+     * An option for specifying the port to connect to.
+     */
+    val port: ScallopOption[Int] = opt[Int](
+      short = 'p',
+      descr = "The port to connect to")
     verify()
   }
 }

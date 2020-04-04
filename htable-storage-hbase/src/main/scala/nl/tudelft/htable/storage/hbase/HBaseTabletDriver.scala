@@ -54,9 +54,12 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
           else
             Iterator()
         case core.Scan(_, range, reversed) =>
+          // Note that the start/end row are also reversed when we scan in reverse order.
+          val startRow = if (reversed) range.end.toArray else range.start.toArray
+          val endRow = if (reversed) range.start.toArray else range.end.toArray
           val scan = new Scan()
-            .withStartRow(range.start.toArray, true)
-            .withStopRow(range.end.toArray, false)
+            .withStartRow(startRow, !reversed)
+            .withStopRow(endRow, reversed)
             .setReversed(reversed)
             .addFamily("hregion".getBytes("UTF-8"))
             .readAllVersions()

@@ -37,7 +37,8 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
     // @todo add region id to be able to reopen files in a later stage
     val info = RegionInfoBuilder
       .newBuilder(tableName)
-      .setRegionId(System.currentTimeMillis())
+      .setRegionId(0)
+      .setReplicaId(0)
       .setStartKey(tablet.range.start.toArray)
       .setEndKey(tablet.range.end.toArray)
       .setSplit(false)

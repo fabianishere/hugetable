@@ -37,9 +37,19 @@ trait HTableClient {
   def split(name: String, startKey: ByteString): Future[Done]
 
   /**
+   * Query the rows of a table on a particular node.
+   */
+  def read(node: Node, query: Query): Source[Row, NotUsed]
+
+  /**
    * Query the rows of a table.
    */
   def read(query: Query): Source[Row, NotUsed]
+
+  /**
+   * Perform a mutation on a row on a particular node.
+   */
+  def mutate(node: Node, mutation: RowMutation): Future[Done]
 
   /**
    * Perform a mutation on a row.
@@ -80,4 +90,10 @@ object HTableClient {
     val system = ActorSystem("client")
     new HTableClientImpl(zookeeper, system, new CachingServiceResolver(new DefaultServiceResolverImpl(system)))
   }
+
+  /**
+   * Construct a [HTableClient] using the given ZooKeeper client.
+   */
+  private[htable] def createInternal(zookeeper: CuratorFramework, actorSystem: ActorSystem, resolver: ServiceResolver): HTableInternalClient =
+    new HTableClientImpl(zookeeper, actorSystem, resolver)
 }

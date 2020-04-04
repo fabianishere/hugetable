@@ -9,39 +9,39 @@ import "Base.proto";
 package nl.tudelft.htable.protocol.internal;
 
 // Request message for [InternalService.Ping].
-message PingRequest {}
+message PingRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalRequest";
+}
 
 // Response message for [InternalService.Ping]
-message PingResponse {}
+message PingResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalResponse";
+}
 
-// Request message for [InternalService.Query]
-message QueryRequest {}
+// Request message for [InternalService.Report]
+message ReportRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalRequest";
+}
 
-// Response message for [InternalService.Query].
-message QueryResponse {
+// Response message for [InternalService.Report].
+message ReportResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalResponse";
+
     // The tablets that the node is serving.
     repeated Tablet tablets = 1;
 }
 
 // Request message for [InternalService.Assign]
 message AssignRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalRequest";
+
     // The tablets that the node is assigned.
     repeated Tablet tablets = 1;
 }
 
 // Response message for [InternalService.Assign].
-message AssignResponse {}
-
-// A tablet that is served by a node.
-message Tablet {
-    // The name of the table.
-    string table_name = 1;
-
-    // The start key of the tablet.
-    bytes start_key = 2;
-
-    // The end key of the tablet.
-    bytes end_key = 3;
+message AssignResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalResponse";
 }
 
 service InternalService {
@@ -49,7 +49,7 @@ service InternalService {
     rpc Ping (PingRequest) returns (PingResponse) {}
 
     // Query a node for the tablets it's serving.
-    rpc Query (QueryRequest) returns (QueryResponse) {}
+    rpc Report (ReportRequest) returns (ReportResponse) {}
 
     // Assign the specified tablets to the node.
     rpc Assign (AssignRequest) returns (AssignResponse) {}

@@ -11,6 +11,19 @@ import scala.language.implicitConversions
  * Conversions between core classes and Protobuf objects.
  */
 object ClientAdapters {
+
+  /**
+   * Translate a core [Tablet] to Protobuf [Tablet].
+   */
+  implicit def tabletToProtobuf(tablet: Tablet): protocol.Tablet =
+    protocol.Tablet(tableName = tablet.table, startKey = tablet.range.start, endKey = tablet.range.end)
+
+  /**
+   * Translate a core [Tablet] to Protobuf [Tablet].
+   */
+  implicit def tabletToCore(tablet: protocol.Tablet): Tablet =
+    Tablet(tablet.tableName, RowRange(tablet.startKey, tablet.endKey))
+
   /**
    * Convert the specified [Query] to a [protocol.client.Query].
    */

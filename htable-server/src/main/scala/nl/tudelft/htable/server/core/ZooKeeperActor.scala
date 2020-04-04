@@ -6,7 +6,7 @@ import nl.tudelft.htable.core.Node
 import nl.tudelft.htable.protocol.CoreAdapters
 import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
 import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.framework.recipes.cache.{ChildData, NodeCache}
+import org.apache.curator.framework.recipes.cache.ChildData
 import org.apache.curator.framework.recipes.leader.{LeaderLatch, LeaderLatchListener}
 import org.apache.curator.framework.recipes.nodes.PersistentNode
 import org.apache.curator.framework.state.ConnectionState
@@ -18,7 +18,7 @@ import scala.language.implicitConversions
 /**
  * An actor for managing the ZooKeeper connection.
  */
-object ZooKeeperManager {
+object ZooKeeperActor {
 
   /**
    * Commands that are accepted by the [ZooKeeperManager].
@@ -26,39 +26,9 @@ object ZooKeeperManager {
   sealed trait Command
 
   /**
-   * Internal message indicating ZooKeeper connection was successful.
-   */
-  private final case object Connected extends Command
-
-  /**
-   * Internal message indicating ZooKeeper disconnected.
-   */
-  private final case object Disconnected extends Command
-
-  /**
-   * Message to claim the root tablet.
-   */
-  final case object ClaimRoot extends Command
-
-  /**
-   * Message to unclaim the root tablet.
-   */
-  final case object UnclaimRoot extends Command
-
-  /**
    * Events emitted by the [ZooKeeperManager].
    */
   sealed trait Event
-
-  /**
-   * Internal message indicating that the server was elected to be the leader.
-   */
-  final case object Elected extends Event
-
-  /**
-   * Internal message indicating that the server was overthrown.
-   */
-  final case object Overthrown extends Event
 
   /**
    * Internal message sent when a new self has joined the cluster.
@@ -71,18 +41,38 @@ object ZooKeeperManager {
   final case class NodeLeft(node: Node) extends Event
 
   /**
-   * Event emitted when the root tablet location was updated.
+   * Message to update the location of the root tablet.
    */
-  final case class RootUpdated(node: Option[Node]) extends Event
+  final case class SetRoot(node: Node) extends Command
+
+  /**
+   * Internal message indicating that the server was elected to be the leader.
+   */
+  final case object Elected extends Event
+
+  /**
+   * Internal message indicating that the server was overthrown.
+   */
+  final case object Overthrown extends Event
+
+  /**
+   * Internal message indicating ZooKeeper connection was successful.
+   */
+  private final case object Connected extends Command
+
+  /**
+   * Internal message indicating ZooKeeper disconnected.
+   */
+  private final case object Disconnected extends Command
 
   /**
    * Construct the behavior for the ZooKeeper manager.
    *
    * @param zookeeper The ZooKeeper client to use.
-   * @param node The self to open the connection for.
-   * @param listener The listener to emit events to.
+   * @param self The self to open the connection for.
+   * @param listener  The listener to emit events to.
    */
-  def apply(zookeeper: CuratorFramework, node: Node, listener: ActorRef[Event]): Behavior[Command] =
+  def apply(self: Node, zookeeper: CuratorFramework, listener: ActorRef[Event]): Behavior[Command] =
     Behaviors.setup { context =>
       context.log.info("Connecting to ZooKeeper")
 
@@ -96,7 +86,7 @@ object ZooKeeperManager {
 
       Behaviors
         .receiveMessage[Command] {
-          case Connected    => connected(zookeeper, node, listener)
+          case Connected    => connected(self, zookeeper, listener)
           case Disconnected => Behaviors.stopped
           case _            => throw new IllegalStateException()
         }
@@ -110,13 +100,13 @@ object ZooKeeperManager {
   /**
    * Construct the behavior for when the ZooKeeper client is connected.
    */
-  private def connected(zookeeper: CuratorFramework, node: Node, listener: ActorRef[Event]): Behavior[Command] =
+  private def connected(self: Node, zookeeper: CuratorFramework, listener: ActorRef[Event]): Behavior[Command] =
     Behaviors.setup { context =>
       context.log.info("Joining leader election")
 
       // Create group membership
       val membership =
-        new GroupMember(zookeeper, "/servers", node.uid, CoreAdapters.serializeAddress(node.address))
+        new GroupMember(zookeeper, "/servers", self.uid, CoreAdapters.serializeAddress(self.address))
       membership.addListener(new GroupMemberListener {
         override def memberJoined(data: ChildData): Unit = listener ! NodeJoined(data)
         override def memberLeft(data: ChildData): Unit = listener ! NodeLeft(data)
@@ -124,7 +114,7 @@ object ZooKeeperManager {
       membership.start()
 
       // Perform leader election via ZooKeeper
-      val leaderLatch = new LeaderLatch(zookeeper, "/leader", node.uid)
+      val leaderLatch = new LeaderLatch(zookeeper, "/leader", self.uid)
       leaderLatch.addListener(
         new LeaderLatchListener {
           override def isLeader(): Unit = listener ! Elected
@@ -137,34 +127,26 @@ object ZooKeeperManager {
       // Claim root
       var rootClaim: Option[PersistentNode] = None
 
-      // Watch root
-      val cache = new NodeCache(zookeeper, "/root")
-      cache.getListenable.addListener(() => listener ! RootUpdated(Option(cache.getCurrentData).map(toNode)))
-      cache.start()
-
       Behaviors
         .receiveMessage[Command] {
-          case ClaimRoot =>
-            context.log.info("Claiming root")
-            val pen = new PersistentNode(zookeeper,
-                                         CreateMode.EPHEMERAL,
-                                         false,
-                                         "/root",
-                                         CoreAdapters.serializeAddress(node.address))
-            pen.start()
-            rootClaim = Some(pen)
-            Behaviors.same
-          case UnclaimRoot =>
-            context.log.info("Unclaiming root")
-            rootClaim.foreach(_.close())
-            rootClaim = None
+          case SetRoot(node) =>
+            context.log.info(s"Root tablet located at $node")
+            rootClaim match {
+              case Some(value) =>
+                value.setData(node.uid.getBytes("UTF-8"))
+              case None =>
+                val pen = new PersistentNode(zookeeper, CreateMode.EPHEMERAL, false, "/root",
+                  node.uid.getBytes("UTF-8"))
+                pen.start()
+                rootClaim = Some(pen)
+            }
+
             Behaviors.same
           case Disconnected => throw new IllegalStateException("ZooKeeper has disconnected")
           case _            => throw new IllegalStateException()
         }
         .receiveSignal {
           case (_, PostStop) =>
-            cache.close()
             leaderLatch.close()
             membership.close()
             zookeeper.close()

@@ -1,18 +1,17 @@
 package nl.tudelft.htable.client
 
-import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 
 import akka.{Done, NotUsed}
 import akka.actor.ActorSystem
-import akka.grpc.GrpcClientSettings
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import nl.tudelft.htable.core.{Get, Node, Order, Query, Row, RowMutation, RowRange, Scan, Tablet}
 import nl.tudelft.htable.protocol.CoreAdapters
-import nl.tudelft.htable.protocol.admin.{AdminServiceClient, CreateTableRequest, DeleteTableRequest, SplitTableRequest}
+import nl.tudelft.htable.protocol.admin.{CreateTableRequest, DeleteTableRequest, SplitTableRequest}
 import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
+import nl.tudelft.htable.protocol.internal.{AssignRequest, PingRequest, ReportRequest}
 import org.apache.curator.framework.CuratorFramework
 
 import scala.concurrent.{ExecutionContextExecutor, Future, Promise}
@@ -28,7 +27,7 @@ import scala.util.Try
 private class HTableClientImpl(private val zookeeper: CuratorFramework,
                                private val actorSystem: ActorSystem,
                                private val resolver: ServiceResolver)
-    extends HTableClient {
+    extends HTableInternalClient {
   implicit val sys: ActorSystem = actorSystem
   implicit val mat: Materializer = Materializer(sys)
   implicit val ec: ExecutionContextExecutor = sys.dispatcher
@@ -56,20 +55,24 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
       .map(_ => Done)
   }
 
+  override def read(node: Node, query: Query): Source[Row, NotUsed] = {
+    val client = resolver.openClient(node)
+    read(query, client)
+  }
+
   override def read(query: Query): Source[Row, NotUsed] = {
     val nodes = query match {
-      case Get(table, key)       => resolve(Tablet(query.table, RowRange(key, key ++ ByteString(9, 9))))
+      case Get(_, key)       => resolve(Tablet(query.table, RowRange(key, key ++ ByteString(9, 9))))
       case Scan(table, range, _) => resolve(Tablet(table, range))
     }
 
     nodes.flatMapConcat {
       case (node, tablet) =>
-        val client = resolver.openClient(node)
         val updatedQuery = query match {
           case Scan(table, _, reversed) => Scan(table, tablet.range, reversed)
           case _                        => query
         }
-        read(updatedQuery, client)
+        read(node, updatedQuery)
     }
   }
 
@@ -79,14 +82,29 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
       .mapConcat(_.rows)
   }
 
+  override def mutate(node: Node, mutation: RowMutation): Future[Done] = {
+    val client = resolver.openClient(node)
+    client.mutate(MutateRequest(Some(mutation))).map(_ => Done)
+  }
+
   override def mutate(mutation: RowMutation): Future[Done] = {
     resolve(Tablet(mutation.table, RowRange(mutation.key, mutation.key ++ ByteString(9, 9))))
       .flatMapConcat {
-        case (node, _) =>
-          val client = resolver.openClient(node)
-          Source.future(client.mutate(MutateRequest(Some(mutation))))
+        case (node, _) => Source.future(mutate(node, mutation))
       }
       .runForeach(_ => ())
+  }
+
+  override def ping(node: Node): Future[Done] = {
+    resolver.openInternal(node).ping(PingRequest()).map(_ => Done)
+  }
+
+  override def report(node: Node): Future[Seq[Tablet]] = {
+    resolver.openInternal(node).report(ReportRequest()).map(_.tablets)
+  }
+
+  override def assign(node: Node, tablets: Seq[Tablet]): Future[Done] = {
+    resolver.openInternal(node).assign(AssignRequest(tablets)).map(_ => Done)
   }
 
   override def closed(): Future[Done] = promise.future
@@ -159,13 +177,13 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
 
   private def resolveRoot(): Node = {
     val uid = new String(zookeeper.getData.forPath("/root"), StandardCharsets.UTF_8)
-    val address = CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/server/$uid"))
+    val address = CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid"))
     Node(uid, address)
   }
 
   private def resolveMaster(): Node = {
     val uid = new String(zookeeper.getData.forPath("/leader"), StandardCharsets.UTF_8)
-    val address = CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/server/$uid"))
+    val address = CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid"))
     Node(uid, address)
   }
 }

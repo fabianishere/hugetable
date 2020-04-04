@@ -1,23 +1,20 @@
 package nl.tudelft.htable.server.core.services
 
-import akka.NotUsed
-import akka.actor.typed.scaladsl.ActorContext
-import akka.actor.typed.scaladsl.AskPattern._
-import akka.actor.typed.{ActorSystem, DispatcherSelector}
+import akka.actor.typed.{ActorRef, ActorSystem, DispatcherSelector}
 import akka.stream.scaladsl.Source
 import akka.util.Timeout
-import nl.tudelft.htable.protocol.ClientAdapters
-import nl.tudelft.htable.protocol.ClientAdapters._
+import akka.{Done, NotUsed}
+import nl.tudelft.htable.core.Row
 import nl.tudelft.htable.protocol.client._
-import nl.tudelft.htable.server.core.NodeManager
+import nl.tudelft.htable.server.core.NodeActor
 
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext, Future, Promise}
 
 /**
  * Implementation of the gRPC [ClientService].
  */
-private[htable] class ClientServiceImpl(context: ActorContext[AnyRef])(implicit val sys: ActorSystem[Nothing])
+private[htable] class ClientServiceImpl(handler: ActorRef[NodeActor.Command])(implicit val sys: ActorSystem[Nothing])
     extends ClientService {
   implicit val timeout: Timeout = 3.seconds
   implicit val ec: ExecutionContext = sys.dispatchers.lookup(DispatcherSelector.default())
@@ -28,9 +25,11 @@ private[htable] class ClientServiceImpl(context: ActorContext[AnyRef])(implicit 
   override def read(in: ReadRequest): Source[ReadResponse, NotUsed] = {
     in.query match {
       case Some(value) =>
+        val promise = Promise[Source[Row, NotUsed]]
+        handler ! NodeActor.Read(value, promise)
         Source
-          .future(context.self.ask[NodeManager.ReadResponse](ref => NodeManager.Read(value, ref)))
-          .flatMapConcat(_.rows)
+          .future(promise.future)
+          .flatMapConcat(identity)
           .grouped(5)
           .map(rows => ReadResponse(rows))
       case None =>
@@ -45,9 +44,9 @@ private[htable] class ClientServiceImpl(context: ActorContext[AnyRef])(implicit 
   override def mutate(in: MutateRequest): Future[MutateResponse] = {
     in.mutation match {
       case Some(value) =>
-        context.self
-          .ask[NodeManager.MutateResponse.type](NodeManager.Mutate(value, _))
-          .map(_ => MutateResponse())
+        val promise = Promise[Done]
+        handler ! NodeActor.Mutate(value, promise)
+        promise.future.map(_ => MutateResponse())
       case None =>
         Future.successful(MutateResponse())
     }

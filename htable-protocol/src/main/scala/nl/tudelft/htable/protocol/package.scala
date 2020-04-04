@@ -31,6 +31,12 @@ package object protocol {
   /**
    * A [TypeMapper] for the [Row] type.
    */
+  implicit val tabletType: TypeMapper[protocol.Tablet, core.Tablet] =
+    TypeMapper[protocol.Tablet, core.Tablet](tabletToCore)(tabletToProtobuf)
+
+  /**
+   * A [TypeMapper] for the [Row] type.
+   */
   implicit val rowType: TypeMapper[protocol.Row, core.Row] =
     TypeMapper[protocol.Row, core.Row](rowToCore)(rowToProtobuf)
 
