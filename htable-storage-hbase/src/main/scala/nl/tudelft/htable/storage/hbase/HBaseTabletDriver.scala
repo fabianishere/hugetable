@@ -8,7 +8,7 @@ import akka.util.ByteString
 import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
-import org.apache.hadoop.hbase.client.{Get, Put, Scan}
+import org.apache.hadoop.hbase.client.{Get, Put, RegionInfoBuilder, Scan}
 import org.apache.hadoop.hbase.regionserver.{HRegion, RegionScanner}
 import org.apache.hadoop.hbase.{Cell, CellBuilderFactory, CellBuilderType, CellUtil}
 
@@ -39,6 +39,9 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
     }
 
     region.put(put)
+
+    // Force flush for now to not lose changes when terminating the process
+    region.flush(true)
   }
 
   /**
@@ -84,6 +87,32 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
           }.flatten
       }
     }
+  }
+
+  override def split(splitKey: ByteString): (Tablet, Tablet) = {
+    val leftTablet = Tablet(tablet.table, RowRange(tablet.range.start, splitKey))
+    val leftDaughter = RegionInfoBuilder
+      .newBuilder(region.getTableDescriptor.getTableName)
+      .setStartKey(tablet.range.start.toArray)
+      .setEndKey(splitKey.toArray)
+      .setSplit(false)
+      .setRegionId(region.getRegionInfo.getRegionId + 1)
+      .build
+
+    val rightTablet = Tablet(tablet.table, RowRange(splitKey, tablet.range.end))
+    val rightDaughter = RegionInfoBuilder
+      .newBuilder(region.getTableDescriptor.getTableName)
+      .setStartKey(splitKey.toArray)
+      .setEndKey(tablet.range.end.toArray)
+      .setSplit(false)
+      .setRegionId(region.getRegionInfo.getRegionId + 1)
+      .build
+
+    val regionFs = region.getRegionFileSystem
+    regionFs.createSplitsDir(leftDaughter, rightDaughter)
+    SplitUtils.splitStores(region, leftDaughter, rightDaughter)
+
+    (leftTablet, rightTablet)
   }
 
   override def close(): Unit = region.close()

@@ -94,6 +94,8 @@ object HTableClient {
   /**
    * Construct a [HTableClient] using the given ZooKeeper client.
    */
-  private[htable] def createInternal(zookeeper: CuratorFramework, actorSystem: ActorSystem, resolver: ServiceResolver): HTableInternalClient =
+  private[htable] def createInternal(zookeeper: CuratorFramework,
+                                     actorSystem: ActorSystem,
+                                     resolver: ServiceResolver): HTableInternalClient =
     new HTableClientImpl(zookeeper, actorSystem, resolver)
 }

@@ -4,6 +4,7 @@ import java.io.Closeable
 
 import akka.NotUsed
 import akka.stream.scaladsl.Source
+import akka.util.ByteString
 import nl.tudelft.htable.core.{Query, Row, RowMutation, Tablet}
 
 /**
@@ -25,4 +26,9 @@ trait TabletDriver extends Closeable {
    * Query the specified data in the tablet.
    */
   def read(query: Query): Source[Row, NotUsed]
+
+  /**
+   * Split the tablet into two tablets at the specified split key.
+   */
+  def split(splitKey: ByteString): (Tablet, Tablet)
 }

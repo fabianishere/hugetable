@@ -6,7 +6,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hbase.client.{ColumnFamilyDescriptorBuilder, RegionInfoBuilder, TableDescriptorBuilder}
 import org.apache.hadoop.hbase.regionserver.{HRegion, MemStoreLAB}
 import org.apache.hadoop.hbase.wal.WALFactory
-import org.apache.hadoop.hbase.{HConstants, TableName}
+import org.apache.hadoop.hbase.{HConstants, HTableDescriptor, TableName}
 
 /**
  * A [StorageDriver] that uses HBase.
@@ -33,8 +33,6 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
     conf.set("hbase.wal.provider", "org.apache.hadoop.hbase.wal.DisabledWALProvider")
 
     val factory = new WALFactory(conf, "hregion-tablet")
-
-    // @todo add region id to be able to reopen files in a later stage
     val info = RegionInfoBuilder
       .newBuilder(tableName)
       .setRegionId(0)
@@ -58,7 +56,7 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
 }
 
 object HBaseStorageDriver {
-  private val columnFamily =
+  private[hbase] val columnFamily =
     ColumnFamilyDescriptorBuilder
       .newBuilder("hregion".getBytes("UTF-8"))
       .setMaxVersions(10) // TODO Add option for specifying this

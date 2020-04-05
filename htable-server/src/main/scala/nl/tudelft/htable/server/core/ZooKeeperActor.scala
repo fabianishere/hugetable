@@ -135,8 +135,8 @@ object ZooKeeperActor {
               case Some(value) =>
                 value.setData(node.uid.getBytes("UTF-8"))
               case None =>
-                val pen = new PersistentNode(zookeeper, CreateMode.EPHEMERAL, false, "/root",
-                  node.uid.getBytes("UTF-8"))
+                val pen =
+                  new PersistentNode(zookeeper, CreateMode.EPHEMERAL, false, "/root", node.uid.getBytes("UTF-8"))
                 pen.start()
                 rootClaim = Some(pen)
             }

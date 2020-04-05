@@ -62,7 +62,7 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
 
   override def read(query: Query): Source[Row, NotUsed] = {
     val nodes = query match {
-      case Get(_, key)       => resolve(Tablet(query.table, RowRange(key, key ++ ByteString(9, 9))))
+      case Get(_, key)           => resolve(Tablet(query.table, RowRange(key, key ++ ByteString(9, 9))))
       case Scan(table, range, _) => resolve(Tablet(table, range))
     }
 

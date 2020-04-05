@@ -42,7 +42,6 @@ object Main {
     hconf.set("fs.defaultFS", "hdfs://localhost:9000")
     val fs = FileSystem.get(hconf)
 
-
     val node = Node(UUID.randomUUID().toString, new InetSocketAddress("localhost", conf.port()))
     val driver = new HBaseStorageDriver(fs)
     ActorSystem(HTableActor(node, zookeeper, driver), "htable", actorConf)
@@ -66,9 +65,7 @@ object Main {
     /**
      * An option for specifying the port to connect to.
      */
-    val port: ScallopOption[Int] = opt[Int](
-      short = 'p',
-      descr = "The port to connect to")
+    val port: ScallopOption[Int] = opt[Int](short = 'p', descr = "The port to connect to")
     verify()
   }
 }

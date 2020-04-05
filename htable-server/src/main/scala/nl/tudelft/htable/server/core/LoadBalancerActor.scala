@@ -48,9 +48,10 @@ object LoadBalancerActor {
    * @param zk The reference to the ZooKeeper actor.
    * @param client The client to communicate with the other nodes.
    */
-  def apply(zk: ActorRef[ZooKeeperActor.Command], client: HTableInternalClient): Behavior[Command] = Behaviors.setup { context =>
-    context.log.info("Starting load balancer")
-    idle(zk, client)
+  def apply(zk: ActorRef[ZooKeeperActor.Command], client: HTableInternalClient): Behavior[Command] = Behaviors.setup {
+    context =>
+      context.log.info("Starting load balancer")
+      idle(zk, client)
   }
 
   /**

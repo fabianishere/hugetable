@@ -4,9 +4,34 @@ import akka.{Done, NotUsed}
 import akka.stream.scaladsl.Source
 import nl.tudelft.htable.client.ServiceResolver
 import nl.tudelft.htable.core.Node
-import nl.tudelft.htable.protocol.admin.{AdminService, AdminServiceClient, CreateTableRequest, CreateTableResponse, DeleteTableRequest, DeleteTableResponse, SplitTableRequest, SplitTableResponse}
-import nl.tudelft.htable.protocol.client.{ClientService, ClientServiceClient, MutateRequest, MutateResponse, ReadRequest, ReadResponse}
-import nl.tudelft.htable.protocol.internal.{AssignRequest, AssignResponse, InternalService, InternalServiceClient, PingRequest, PingResponse, ReportRequest, ReportResponse}
+import nl.tudelft.htable.protocol.admin.{
+  AdminService,
+  AdminServiceClient,
+  CreateTableRequest,
+  CreateTableResponse,
+  DeleteTableRequest,
+  DeleteTableResponse,
+  SplitTableRequest,
+  SplitTableResponse
+}
+import nl.tudelft.htable.protocol.client.{
+  ClientService,
+  ClientServiceClient,
+  MutateRequest,
+  MutateResponse,
+  ReadRequest,
+  ReadResponse
+}
+import nl.tudelft.htable.protocol.internal.{
+  AssignRequest,
+  AssignResponse,
+  InternalService,
+  InternalServiceClient,
+  PingRequest,
+  PingResponse,
+  ReportRequest,
+  ReportResponse
+}
 
 import scala.concurrent.{Future, Promise}
 
@@ -17,7 +42,8 @@ class ServerServiceResolver(val self: Node,
                             val delegate: ServiceResolver,
                             val clientService: ClientService,
                             val adminService: AdminService,
-                            val internalService: InternalService) extends ServiceResolver {
+                            val internalService: InternalService)
+    extends ServiceResolver {
   private val promise = Promise[Done]()
 
   /**

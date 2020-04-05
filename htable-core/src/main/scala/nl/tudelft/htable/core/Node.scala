@@ -9,7 +9,7 @@ final case class Node(uid: String, address: InetSocketAddress) {
   override def equals(that: Any): Boolean =
     that match {
       case that: Node => uid == that.uid
-      case _ => false
+      case _          => false
     }
 
   override def hashCode: Int = uid.hashCode

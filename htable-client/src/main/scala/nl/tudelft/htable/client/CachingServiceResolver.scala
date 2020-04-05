@@ -15,7 +15,6 @@ class CachingServiceResolver(val delegate: ServiceResolver) extends ServiceResol
   private val adminCache = new ConcurrentHashMap[Node, AdminServiceClient]
   private val internalCache = new ConcurrentHashMap[Node, InternalServiceClient]
 
-
   override def openClient(node: Node): ClientServiceClient = {
     clientCache.computeIfAbsent(node, node => delegate.openClient(node))
   }
