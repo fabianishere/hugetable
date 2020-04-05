@@ -1,9 +1,11 @@
 package nl.tudelft.htable.server.core
 
-import akka.actor.typed.Behavior
+import akka.actor.typed.{ActorRef, Behavior}
 import akka.actor.typed.scaladsl.Behaviors
 import akka.stream.scaladsl.Source
+import akka.util.ByteString
 import akka.{Done, NotUsed}
+import nl.tudelft.htable.core.TabletState.TabletState
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.{StorageDriver, TabletDriver}
 
@@ -47,15 +49,37 @@ object NodeActor {
   final case class Mutate(mutation: RowMutation, promise: Promise[Done]) extends Command
 
   /**
+   * Request the server to split a tablet.
+   */
+  final case class Split(tablet: Tablet, splitKey: ByteString, promise: Promise[Done]) extends Command
+
+  /**
+   * Events emitted by the [NodeActor].
+   */
+  sealed trait Event
+
+  /**
+   * An event to indicate that the specified tablets have been invalidated.
+   */
+  final case class Invalidated(tablets: Map[Tablet, TabletState]) extends Event
+
+  /**
    * Construct the behavior of the node actor.
    *
    * @param self The node that we represent.
    * @param storageDriver The driver to use for accessing the data storage.
+   * @param listener The listener to emit events to.
    */
-  def apply(self: Node, storageDriver: StorageDriver): Behavior[Command] = Behaviors.setup { context =>
+  def apply(self: Node, storageDriver: StorageDriver, listener: ActorRef[Event]): Behavior[Command] = Behaviors.setup { context =>
     context.log.info(s"Starting actor for node $self")
 
     val tablets = new mutable.TreeMap[Tablet, TabletDriver]()
+
+    def find(table: String, key: ByteString): Option[(Tablet, TabletDriver)] = {
+      tablets.rangeTo(Tablet(table, RowRange.leftBounded(key)))
+        .dropWhile(_._1.table != table)
+        .headOption
+    }
 
     Behaviors.receiveMessagePartial {
       case Ping(promise) =>
@@ -79,7 +103,7 @@ object NodeActor {
         context.log.debug(s"READ $query")
         query match {
           case Get(table, key) =>
-            tablets.rangeTo(Tablet(table, RowRange.leftBounded(key))).lastOption match {
+            find(table, key) match {
               case Some((_, driver)) => promise.success(driver.read(query))
               case None              => promise.failure(NotServingTabletException(s"The key $key is not served"))
             }
@@ -98,9 +122,31 @@ object NodeActor {
       case Mutate(mutation, promise) =>
         context.log.debug(s"MUTATE $mutation")
 
-        tablets.rangeTo(Tablet(mutation.table, RowRange.leftBounded(mutation.key))).lastOption match {
-          case Some((_, driver)) => promise.complete(Try { driver.mutate(mutation) }.map(_ => Done))
-          case None              => promise.failure(NotServingTabletException(s"The key ${mutation.key} is not served"))
+        find(mutation.table, mutation.key) match {
+          case Some((_, driver)) =>
+            promise.complete(Try { driver.mutate(mutation) }.map(_ => Done))
+          case None =>
+            promise.failure(NotServingTabletException(s"The key ${mutation.key} is not served"))
+        }
+        Behaviors.same
+      case Split(tablet, splitKey, promise) =>
+        context.log.info(s"Split tablet $tablet at $splitKey")
+        find(tablet.table, tablet.range.start) match {
+          case Some((tablet, driver)) =>
+            promise.complete(Try {
+              val (left, right) = driver.split(splitKey)
+
+              val invalidations = new mutable.HashMap[Tablet, TabletState]
+              invalidations(tablet) = TabletState.Closed
+              invalidations(left) = TabletState.Unassigned
+              invalidations(right) = TabletState.Unassigned
+
+              listener ! Invalidated(invalidations.toMap)
+
+              Done
+            })
+          case None =>
+            promise.failure(NotServingTabletException(s"The tablet $tablet is not served"))
         }
         Behaviors.same
     }

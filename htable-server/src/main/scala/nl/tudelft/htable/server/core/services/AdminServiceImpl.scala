@@ -3,10 +3,8 @@ package nl.tudelft.htable.server.core.services
 import akka.Done
 import akka.actor.typed.{ActorRef, ActorSystem, DispatcherSelector}
 import akka.util.Timeout
-import nl.tudelft.htable.core.{RowRange, Tablet}
-import nl.tudelft.htable.protocol.CoreAdapters._
 import nl.tudelft.htable.protocol.admin._
-import nl.tudelft.htable.server.core.{AdminActor, HTableActor}
+import nl.tudelft.htable.server.core.AdminActor
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise}
@@ -37,12 +35,9 @@ private[htable] class AdminServiceImpl(handler: ActorRef[AdminActor.Command])(im
     promise.future.map(_ => DeleteTableResponse())
   }
 
-  /**
-   * Split a table in the cluster.
-   */
-  override def splitTable(in: SplitTableRequest): Future[SplitTableResponse] = {
+  override def invalidate(in: InvalidateRequest): Future[InvalidateResponse] = {
     val promise = Promise[Done]
-    handler ! AdminActor.SplitTable(Tablet(in.tableName, RowRange.leftBounded(in.startKey)), in.splitKey, promise)
-    promise.future.map(_ => SplitTableResponse())
+    handler ! AdminActor.Invalidate(in.tablets, promise)
+    promise.future.map(_ => InvalidateResponse())
   }
 }

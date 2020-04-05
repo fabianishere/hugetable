@@ -44,6 +44,22 @@ message AssignResponse {
     option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalResponse";
 }
 
+// Request message for [InternalService.Split]
+message SplitRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalRequest";
+
+    // The tablet to split.
+    Tablet tablet = 1;
+
+    // The key at which to split the tablet.
+    bytes split_key = 2;
+}
+
+// Response message for [InternalService.Split].
+message SplitResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalResponse";
+}
+
 service InternalService {
     // Ping a node in the cluster.
     rpc Ping (PingRequest) returns (PingResponse) {}
@@ -53,4 +69,7 @@ service InternalService {
 
     // Assign the specified tablets to the node.
     rpc Assign (AssignRequest) returns (AssignResponse) {}
+
+    // Split the specified tablet that is residing on the node.
+    rpc Split (SplitRequest) returns (SplitResponse) {}
 }

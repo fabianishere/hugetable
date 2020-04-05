@@ -4,34 +4,9 @@ import akka.{Done, NotUsed}
 import akka.stream.scaladsl.Source
 import nl.tudelft.htable.client.ServiceResolver
 import nl.tudelft.htable.core.Node
-import nl.tudelft.htable.protocol.admin.{
-  AdminService,
-  AdminServiceClient,
-  CreateTableRequest,
-  CreateTableResponse,
-  DeleteTableRequest,
-  DeleteTableResponse,
-  SplitTableRequest,
-  SplitTableResponse
-}
-import nl.tudelft.htable.protocol.client.{
-  ClientService,
-  ClientServiceClient,
-  MutateRequest,
-  MutateResponse,
-  ReadRequest,
-  ReadResponse
-}
-import nl.tudelft.htable.protocol.internal.{
-  AssignRequest,
-  AssignResponse,
-  InternalService,
-  InternalServiceClient,
-  PingRequest,
-  PingResponse,
-  ReportRequest,
-  ReportResponse
-}
+import nl.tudelft.htable.protocol.admin.{AdminService, AdminServiceClient, CreateTableRequest, CreateTableResponse, DeleteTableRequest, DeleteTableResponse, InvalidateRequest, InvalidateResponse, SplitTableRequest, SplitTableResponse}
+import nl.tudelft.htable.protocol.client.{ClientService, ClientServiceClient, MutateRequest, MutateResponse, ReadRequest, ReadResponse}
+import nl.tudelft.htable.protocol.internal.{AssignRequest, AssignResponse, InternalService, InternalServiceClient, PingRequest, PingResponse, ReportRequest, ReportResponse, SplitRequest, SplitResponse}
 
 import scala.concurrent.{Future, Promise}
 
@@ -118,10 +93,7 @@ class ServerServiceResolver(val self: Node,
      */
     override def deleteTable(in: DeleteTableRequest): Future[DeleteTableResponse] = adminService.deleteTable(in)
 
-    /**
-     * Split a tablet in the cluster.
-     */
-    override def splitTable(in: SplitTableRequest): Future[SplitTableResponse] = adminService.splitTable(in)
+    override def invalidate(in: InvalidateRequest): Future[InvalidateResponse] = adminService.invalidate(in)
   }
 
   private object InternalServiceClientImpl extends InternalServiceClient {
@@ -131,6 +103,8 @@ class ServerServiceResolver(val self: Node,
     }
 
     override def closed: Future[Done] = promise.future
+
+    override def split(in: SplitRequest): Future[SplitResponse] = internalService.split(in)
 
     /**
      * Ping a node in the cluster.

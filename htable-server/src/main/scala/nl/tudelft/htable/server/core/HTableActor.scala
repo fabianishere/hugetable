@@ -3,6 +3,7 @@ package nl.tudelft.htable.server.core
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
+import akka.util.ByteString
 import nl.tudelft.htable.client.{CachingServiceResolver, DefaultServiceResolverImpl, HTableClient, HTableInternalClient}
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.server.core.services.{AdminServiceImpl, ClientServiceImpl, InternalServiceImpl}
@@ -11,6 +12,7 @@ import nl.tudelft.htable.storage.StorageDriver
 import org.apache.curator.framework.CuratorFramework
 
 import scala.collection.mutable
+import scala.concurrent.{ExecutionContext, Future}
 
 object HTableActor {
 
@@ -18,6 +20,16 @@ object HTableActor {
    * Internal commands that are accepted by the [HTableServer].
    */
   sealed trait Command
+
+  /**
+   * Internal message wrapper for Node event.
+   */
+  private final case class NodeEvent(event: NodeActor.Event) extends Command
+
+  /**
+   * Internal message wrapper for Admin event.
+   */
+  private final case class AdminEvent(event: AdminActor.Event) extends Command
 
   /**
    * Internal message wrapper for ZooKeeper event.
@@ -38,12 +50,14 @@ object HTableActor {
         context.log.info("Booting HTable server")
 
         // Spawn the node actor
-        val nodeActor = context.spawn(NodeActor(self, storageDriver), name = "node")
+        val nodeAdapter = context.messageAdapter(HTableActor.NodeEvent)
+        val nodeActor = context.spawn(NodeActor(self, storageDriver, nodeAdapter), name = "node")
         // Kill ourselves if the child dies
         context.watch(nodeActor)
 
         // Spawn the admin actor
-        val admin = context.spawn(AdminActor(), name = "admin")
+        val adminAdapter = context.messageAdapter(HTableActor.AdminEvent)
+        val admin = context.spawn(AdminActor(adminAdapter), name = "admin")
         context.watch(admin)
 
         // Create the client for communication with other nodes
@@ -67,8 +81,8 @@ object HTableActor {
         context.watch(grpc)
 
         // Spawn the ZooKeeper actor
-        val adapter = context.messageAdapter(HTableActor.ZooKeeperEvent)
-        val zkRef = context.spawn(ZooKeeperActor(self, zk, adapter), name = "zookeeper")
+        val zkAdapter = context.messageAdapter(HTableActor.ZooKeeperEvent)
+        val zkRef = context.spawn(ZooKeeperActor(self, zk, zkAdapter), name = "zookeeper")
         context.watch(zkRef)
 
         // Spawn the load balancer
@@ -92,9 +106,9 @@ object HTableActor {
               admin: ActorRef[AdminActor.Command],
               loadBalancer: ActorRef[LoadBalancerActor.Command],
               isMaster: Boolean = false,
-              nodes: mutable.Set[Node] = mutable.Set.empty): Behavior[Command] =
+              nodes: mutable.Set[Node] = mutable.HashSet()): Behavior[Command] =
     Behaviors.setup { context =>
-      val nodes = new mutable.HashSet[Node]()
+      implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.default())
       Behaviors
         .receiveMessage[Command] {
           case ZooKeeperEvent(ZooKeeperActor.Elected) =>
@@ -128,6 +142,24 @@ object HTableActor {
               loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
             }
 
+            Behaviors.same
+          case AdminEvent(AdminActor.Invalidated(_)) =>
+            context.log.info(s"Invalidating tablets")
+            assert(isMaster, "Non-masters should not be invalidated")
+            // Start a load balancing cycle
+            loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
+            Behaviors.same
+          case NodeEvent(NodeActor.Invalidated(tablets)) =>
+            context.log.info("Invalidating tablets")
+            val time = System.currentTimeMillis()
+            Future.reduceLeft(tablets.map { case (tablet, state) =>
+              val mutation = RowMutation("METADATA", ByteString(tablet.table) ++ tablet.range.start)
+                .put(RowCell(ByteString("table"), time, ByteString(tablet.table)))
+                .put(RowCell(ByteString("start-key"), time, tablet.range.start))
+                .put(RowCell(ByteString("end-key"), time, tablet.range.end))
+                .put(RowCell(ByteString("state"), time, ByteString(state.id)))
+              client.mutate(mutation)
+            })((x, _) => x).flatMap { _ => client.invalidate(tablets.keys.toSeq) }
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }

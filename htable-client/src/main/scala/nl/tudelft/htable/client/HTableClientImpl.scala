@@ -5,13 +5,13 @@ import java.nio.charset.StandardCharsets
 import akka.{Done, NotUsed}
 import akka.actor.ActorSystem
 import akka.stream.Materializer
-import akka.stream.scaladsl.Source
+import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
 import nl.tudelft.htable.core.{Get, Node, Order, Query, Row, RowMutation, RowRange, Scan, Tablet, TabletState}
 import nl.tudelft.htable.protocol.CoreAdapters
-import nl.tudelft.htable.protocol.admin.{CreateTableRequest, DeleteTableRequest, SplitTableRequest}
+import nl.tudelft.htable.protocol.admin.{CreateTableRequest, DeleteTableRequest, InvalidateRequest, SplitTableRequest}
 import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
-import nl.tudelft.htable.protocol.internal.{AssignRequest, PingRequest, ReportRequest}
+import nl.tudelft.htable.protocol.internal.{AssignRequest, PingRequest, ReportRequest, SplitRequest}
 import org.apache.curator.framework.CuratorFramework
 
 import scala.concurrent.{ExecutionContextExecutor, Future, Promise}
@@ -36,6 +36,12 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
 
   override def master: Node = resolveMaster()
 
+  override def invalidate(tablets: Seq[Tablet]): Future[Done] = {
+    val node = resolveMaster()
+    val client = resolver.openAdmin(node)
+    client.invalidate(InvalidateRequest(tablets)).map(_ => Done)
+  }
+
   override def create(name: String): Future[Done] = {
     val node = resolveMaster()
     val client = resolver.openAdmin(node)
@@ -52,11 +58,13 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
 
 
   override def split(tablet: Tablet, splitKey: ByteString): Future[Done] = {
-    val node = resolveMaster()
-    val client = resolver.openAdmin(node)
-    client
-      .splitTable(SplitTableRequest(tablet.table, CoreAdapters.akkaToProtobuf(tablet.range.start), CoreAdapters.akkaToProtobuf(splitKey)))
+    resolve(tablet)
+      .flatMapConcat { case (node, _) =>
+        Source.future(resolver.openInternal(node)
+          .split(SplitRequest(Some(tablet), splitKey)))
+      }
       .map(_ => Done)
+      .runWith(Sink.head)
   }
 
   override def read(node: Node, query: Query): Source[Row, NotUsed] = {

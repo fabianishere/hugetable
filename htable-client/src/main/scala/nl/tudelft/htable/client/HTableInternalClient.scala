@@ -1,6 +1,7 @@
 package nl.tudelft.htable.client
 
 import akka.Done
+import akka.util.ByteString
 import nl.tudelft.htable.core.{Node, Tablet}
 
 import scala.concurrent.Future
@@ -14,6 +15,11 @@ private[htable] trait HTableInternalClient extends HTableClient {
    * Obtain the master node of the cluster.
    */
   def master: Node
+
+  /**
+   * Invalidate the specified tablets.
+   */
+  def invalidate(tablets: Seq[Tablet]): Future[Done]
 
   /**
    * Ping the specified node.
