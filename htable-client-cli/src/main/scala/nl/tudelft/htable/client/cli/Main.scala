@@ -38,6 +38,9 @@ object Main {
 
     val client = HTableClient(zookeeper)
 
+    client.create("test")
+        .onComplete(println)
+
     client
       .read(Scan("METADATA", RowRange.unbounded))
       .log("error logging")

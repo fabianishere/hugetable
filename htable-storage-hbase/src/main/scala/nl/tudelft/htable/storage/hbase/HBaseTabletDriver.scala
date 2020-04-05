@@ -57,7 +57,8 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
           else
             Iterator()
         case core.Scan(_, range, reversed) =>
-          // Note that the start/end row are also reversed when we scan in reverse order.
+          // Note that the start/end row are also reversed when we scan in reverse order due
+          // to HBase behavior
           val startRow = if (reversed) range.end.toArray else range.start.toArray
           val endRow = if (reversed) range.start.toArray else range.end.toArray
           val scan = new Scan()

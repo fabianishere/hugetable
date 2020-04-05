@@ -1,6 +1,5 @@
 package nl.tudelft.htable.server.core
 
-import akka.Done
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
@@ -12,7 +11,6 @@ import nl.tudelft.htable.storage.StorageDriver
 import org.apache.curator.framework.CuratorFramework
 
 import scala.collection.mutable
-import scala.concurrent.Promise
 
 object HTableActor {
 
@@ -20,16 +18,6 @@ object HTableActor {
    * Internal commands that are accepted by the [HTableServer].
    */
   sealed trait Command
-
-  /**
-   * Request the server to create a new table.
-   */
-  final case class CreateTable(name: String, promise: Promise[Done]) extends Command
-
-  /**
-   * Request the server to delete a table.
-   */
-  final case class DeleteTable(name: String, promise: Promise[Done]) extends Command
 
   /**
    * Internal message wrapper for ZooKeeper event.
@@ -47,96 +35,77 @@ object HTableActor {
     Behaviors
       .setup[Command] { context =>
         implicit val sys: ActorSystem[Nothing] = context.system
-
         context.log.info("Booting HTable server")
 
+        // Spawn the node actor
         val nodeActor = context.spawn(NodeActor(self, storageDriver), name = "node")
+        // Kill ourselves if the child dies
         context.watch(nodeActor)
 
-        val clientService = new ClientServiceImpl(nodeActor)
-        val adminService = new AdminServiceImpl(context.self)
-        val internalService = new InternalServiceImpl(nodeActor)
+        // Spawn the admin actor
+        val admin = context.spawn(AdminActor(), name = "admin")
+        context.watch(admin)
 
+        // Create the client for communication with other nodes
+        val clientService = new ClientServiceImpl(nodeActor)
+        val adminService = new AdminServiceImpl(admin)
+        val internalService = new InternalServiceImpl(nodeActor)
         val client = HTableClient.createInternal(
           zk,
           context.system.toClassic,
           new ServerServiceResolver(
             self,
             new CachingServiceResolver(new DefaultServiceResolverImpl(context.system.toClassic)),
-            clientService,
-            adminService,
-            internalService)
+              clientService,
+              adminService,
+              internalService)
         )
 
+        // Spawn the gRPC services actor
         val grpc =
           context.spawn(GRPCActor(self.address, clientService, adminService, internalService), name = "grpc-server")
         context.watch(grpc)
 
+        // Spawn the ZooKeeper actor
         val adapter = context.messageAdapter(HTableActor.ZooKeeperEvent)
         val zkRef = context.spawn(ZooKeeperActor(self, zk, adapter), name = "zookeeper")
         context.watch(zkRef)
-        started(self, zkRef, client, storageDriver)
+
+        // Spawn the load balancer
+        val loadBalancer = context.spawn(LoadBalancerActor(zkRef, client), name = "load-balancer")
+        context.watch(loadBalancer)
+
+        started(self, client, admin, loadBalancer)
       }
 
   /**
    * Construct the behavior of the server when it has started.
    *
    * @param self The self that has been spawned.
-   * @param zk The reference to the ZooKeeper actor.
    * @param client The client to communicate with other nodes.
-   * @param storageDriver The storage driver to use.
+   * @param admin The admin actor.
+   * @param isMaster A flag to indicate the node is a master.
+   * @param nodes The active nodes in the cluster.
    */
   def started(self: Node,
-              zk: ActorRef[ZooKeeperActor.Command],
               client: HTableInternalClient,
-              storageDriver: StorageDriver): Behavior[Command] =
+              admin: ActorRef[AdminActor.Command],
+              loadBalancer: ActorRef[LoadBalancerActor.Command],
+              isMaster: Boolean = false,
+              nodes: mutable.Set[Node] = mutable.Set.empty): Behavior[Command] =
     Behaviors.setup { context =>
       val nodes = new mutable.HashSet[Node]()
       Behaviors
         .receiveMessage[Command] {
           case ZooKeeperEvent(ZooKeeperActor.Elected) =>
             context.log.info("Node has been elected")
-            master(self, nodes, zk, client, storageDriver)
-          case ZooKeeperEvent(ZooKeeperActor.NodeJoined(node)) =>
-            context.log.info(s"Node ${node.uid} has joined")
-            nodes += node
-            Behaviors.same
-          case ZooKeeperEvent(ZooKeeperActor.NodeLeft(node)) =>
-            context.log.info(s"Node ${node.uid} has left")
-            nodes -= node
-            Behaviors.same
-          case CreateTable(_, promise) =>
-            promise.failure(new NotImplementedError())
-            Behaviors.same
-          case DeleteTable(_, promise) =>
-            promise.failure(new NotImplementedError())
-            Behaviors.same
-          case _ => throw new IllegalArgumentException()
-        }
-    }
+            // Enable admin endpoint
+            admin ! AdminActor.Enable(client)
 
-  /**
-   * Construct the behavior of the server when it becomes the master.
-   *
-   * @param self The self that has been spawned.
-   * @param nodes The active nodes in the cluster.
-   * @param zk The reference to the ZooKeeper actor.
-   * @param client The client to communicate with other nodes.
-   * @param storageDriver The storage driver to use.
-   */
-  def master(self: Node,
-             nodes: mutable.Set[Node],
-             zk: ActorRef[ZooKeeperActor.Command],
-             client: HTableInternalClient,
-             storageDriver: StorageDriver): Behavior[Command] =
-    Behaviors.setup { context =>
-      // Spawn the load balancer
-      val loadBalancer = context.spawn(LoadBalancerActor(zk, client), name = "load-balancer")
-      context.watch(loadBalancer)
-      loadBalancer ! LoadBalancerActor.Start(nodes.toSet)
+            // Schedule a load balancing job
+            loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
 
-      Behaviors
-        .receiveMessage[Command] {
+            started(self, client, admin, loadBalancer, isMaster = true, nodes)
           case ZooKeeperEvent(ZooKeeperActor.Overthrown) =>
             context.log.info("Node has been overthrown")
             Behaviors.stopped
@@ -144,26 +113,23 @@ object HTableActor {
             context.log.info(s"Node ${node.uid} has joined")
             nodes += node
 
-            // Start a load balancing cycle
-            loadBalancer ! LoadBalancerActor.Start(nodes.toSet)
+            if (isMaster) {
+              // Start a load balancing cycle
+              loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
+            }
 
             Behaviors.same
           case ZooKeeperEvent(ZooKeeperActor.NodeLeft(node)) =>
             context.log.info(s"Node ${node.uid} has left")
             nodes -= node
 
-            // Start a load balancing cycle
-            loadBalancer ! LoadBalancerActor.Start(nodes.toSet)
+            if (isMaster) {
+              // Start a load balancing cycle
+              loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
+            }
 
-            Behaviors.same
-          case CreateTable(_, promise) =>
-            promise.failure(new NotImplementedError())
-            Behaviors.same
-          case DeleteTable(_, promise) =>
-            promise.failure(new NotImplementedError())
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }
-
     }
 }

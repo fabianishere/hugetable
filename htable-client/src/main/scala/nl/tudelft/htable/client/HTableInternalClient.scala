@@ -11,6 +11,11 @@ import scala.concurrent.Future
 private[htable] trait HTableInternalClient extends HTableClient {
 
   /**
+   * Obtain the master node of the cluster.
+   */
+  def master: Node
+
+  /**
    * Ping the specified node.
    *
    * @param node The node to ping.

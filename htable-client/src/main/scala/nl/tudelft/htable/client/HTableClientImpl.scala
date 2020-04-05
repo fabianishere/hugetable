@@ -7,7 +7,7 @@ import akka.actor.ActorSystem
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import nl.tudelft.htable.core.{Get, Node, Order, Query, Row, RowMutation, RowRange, Scan, Tablet}
+import nl.tudelft.htable.core.{Get, Node, Order, Query, Row, RowMutation, RowRange, Scan, Tablet, TabletState}
 import nl.tudelft.htable.protocol.CoreAdapters
 import nl.tudelft.htable.protocol.admin.{CreateTableRequest, DeleteTableRequest, SplitTableRequest}
 import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
@@ -15,6 +15,7 @@ import nl.tudelft.htable.protocol.internal.{AssignRequest, PingRequest, ReportRe
 import org.apache.curator.framework.CuratorFramework
 
 import scala.concurrent.{ExecutionContextExecutor, Future, Promise}
+import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 /**
@@ -33,6 +34,8 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
   implicit val ec: ExecutionContextExecutor = sys.dispatcher
   private val promise = Promise[Done]()
 
+  override def master: Node = resolveMaster()
+
   override def create(name: String): Future[Done] = {
     val node = resolveMaster()
     val client = resolver.openAdmin(node)
@@ -47,11 +50,12 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
       .map(_ => Done)
   }
 
-  override def split(name: String, startKey: ByteString): Future[Done] = {
+
+  override def split(tablet: Tablet, splitKey: ByteString): Future[Done] = {
     val node = resolveMaster()
     val client = resolver.openAdmin(node)
     client
-      .splitTable(SplitTableRequest(name, CoreAdapters.akkaToProtobuf(startKey)))
+      .splitTable(SplitTableRequest(tablet.table, CoreAdapters.akkaToProtobuf(tablet.range.start), CoreAdapters.akkaToProtobuf(splitKey)))
       .map(_ => Done)
   }
 
@@ -139,6 +143,8 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
             endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
             range = RowRange(startKey.value, endKey.value)
             metaTablet = Tablet(tablet.table, range)
+            state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
+            if state == TabletState.Served
             nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
             uid = nodeCell.value.utf8String
             metaAddress <- Try { CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid")) }.toOption
@@ -165,6 +171,8 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
               endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
               range = RowRange(startKey.value, endKey.value)
               metaTablet = Tablet(tablet.table, range)
+              state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
+              if state == TabletState.Served
               nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
               uid = nodeCell.value.utf8String
               metaAddress <- Try { CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid")) }.toOption
@@ -182,7 +190,8 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
   }
 
   private def resolveMaster(): Node = {
-    val uid = new String(zookeeper.getData.forPath("/leader"), StandardCharsets.UTF_8)
+    val leader = zookeeper.getChildren.forPath("/leader").asScala.min
+    val uid = new String(zookeeper.getData.forPath(s"/leader/$leader"), StandardCharsets.UTF_8)
     val address = CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid"))
     Node(uid, address)
   }

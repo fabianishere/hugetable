@@ -26,7 +26,7 @@ object LoadBalancerActor {
   /**
    * A message to start a load balancing cycle.
    */
-  final case class Start(nodes: Set[Node]) extends Command
+  final case class Schedule(nodes: Set[Node]) extends Command
 
   /**
    * Received when a node reports its tablets.
@@ -62,7 +62,7 @@ object LoadBalancerActor {
    */
   private def idle(zk: ActorRef[ZooKeeperActor.Command], client: HTableInternalClient): Behavior[Command] =
     Behaviors.receiveMessagePartial {
-      case Start(nodes) => running(zk, client, nodes)
+      case Schedule(nodes) => running(zk, client, nodes)
     }
 
   /**
@@ -106,7 +106,7 @@ object LoadBalancerActor {
           reconstruct(zk, client, responses)
         else
           Behaviors.same
-      case Start(nodes) => running(zk, client, nodes)
+      case Schedule(nodes) => running(zk, client, nodes)
     }
   }
 
@@ -186,6 +186,7 @@ object LoadBalancerActor {
               .put(RowCell(ByteString("start-key"), time, tablet.range.start))
               .put(RowCell(ByteString("end-key"), time, tablet.range.end))
               .put(RowCell(ByteString("node"), time, ByteString(node.uid)))
+              .put(RowCell(ByteString("state"), time, ByteString(TabletState.Served.id)))
 
             context.log.info(s"Asking $metaNode to update METADATA tablet")
             client.mutate(metaNode, mutation)
@@ -206,30 +207,34 @@ object LoadBalancerActor {
     processQueue(queuedTablets)
 
     Behaviors.receiveMessagePartial {
-      case Start(nodes) => running(zk, client, nodes)
+      case Schedule(nodes) => running(zk, client, nodes)
       case NodeRow(_, row) =>
-        context.log.info(s"Received row $row")
+        context.log.debug(s"Received row $row")
         for {
           table <- row.cells.find(_.qualifier == ByteString("table"))
           start <- row.cells.find(_.qualifier == ByteString("start-key"))
           end <- row.cells.find(_.qualifier == ByteString("end-key"))
-          uid <- row.cells.find(_.qualifier == ByteString("node"))
           tablet = Tablet(table.value.utf8String, RowRange(start.value, end.value))
+          state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
+          if state != TabletState.Closed // Do not assign closed tablets
+          uid = row.cells.find(_.qualifier == ByteString("node"))
         } yield {
-          // Assign the tablet to the specified node
-          uidToNode.get(uid.value.utf8String).foreach { node =>
-            tablets
-              .updateWith(node) { tablets =>
-                Some(tablets.map(_.appended(tablet)).getOrElse(Seq.empty))
-              }
-              .get
+          uid.filter(_ => state == TabletState.Served).foreach { cell =>
+            // Assign the tablet to the specified node
+            uidToNode.get(cell.value.utf8String).foreach { node =>
+              tablets
+                .updateWith(node) { tablets =>
+                  Some(tablets.map(_.appended(tablet)).getOrElse(Seq.empty))
+                }
+                .get
+            }
           }
 
           queuedTablets += tablet
         }
         Behaviors.same
       case NodeComplete(_) =>
-        context.log.info("Received all rows")
+        context.log.debug("Received all rows")
         processQueue(queuedTablets)
         if (queuedTablets.isEmpty)
           idle(zk, client)

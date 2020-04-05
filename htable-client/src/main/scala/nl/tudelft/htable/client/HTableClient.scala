@@ -29,12 +29,12 @@ trait HTableClient {
   def delete(name: String): Future[Done]
 
   /**
-   * Split a table in the database.
+   * Split a tablet in the database.
    *
-   * @param name The name of table to split.
-   * @param startKey The start key of the tablet to target.
+   * @param tablet The tablet to split.
+   * @param splitKey The key at which to split the tablet.
    */
-  def split(name: String, startKey: ByteString): Future[Done]
+  def split(tablet: Tablet, splitKey: ByteString): Future[Done]
 
   /**
    * Query the rows of a table on a particular node.

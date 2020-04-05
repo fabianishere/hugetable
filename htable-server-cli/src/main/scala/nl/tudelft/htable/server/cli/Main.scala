@@ -39,7 +39,7 @@ object Main {
       .withFallback(ConfigFactory.defaultApplication())
 
     val hconf = new Configuration()
-    hconf.set("fs.defaultFS", "hdfs://localhost:9000")
+    hconf.set("fs.defaultFS", conf.hadoop())
     val fs = FileSystem.get(hconf)
 
     val node = Node(UUID.randomUUID().toString, new InetSocketAddress("localhost", conf.port()))
@@ -58,14 +58,22 @@ object Main {
      * An option for specifying the ZooKeeper addresses to connect to.
      */
     val zookeeper: ScallopOption[List[String]] = opt[List[String]](
-      short = 'z',
       descr = "The ZooKeeper addresses to connect to",
-      default = Properties.envOrNone("ZOOKEEPER").map(e => List(e)))
+      required = true
+    )
+
+    /**
+     * An option for specifying the HDFS addresses to connect to.
+     */
+    val hadoop: ScallopOption[String] = opt[String](
+      descr = "The Hadoop address to connect to",
+      required = true
+    )
 
     /**
      * An option for specifying the port to connect to.
      */
-    val port: ScallopOption[Int] = opt[Int](short = 'p', descr = "The port to connect to")
+    val port: ScallopOption[Int] = opt[Int](short = 'p', descr = "The port to connect to", required = true)
     verify()
   }
 }

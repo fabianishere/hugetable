@@ -33,6 +33,9 @@ message SplitTableRequest {
 
     // The start key of the tablet to split.
     bytes start_key = 2;
+
+    // The key at which to split the tablet.
+    bytes split_key = 3;
 }
 
 // Response message for [AdminService.CreateTable]

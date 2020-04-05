@@ -11,7 +11,6 @@ import akka.stream.Materializer
 import nl.tudelft.htable.protocol.admin.{AdminService, AdminServiceHandler}
 import nl.tudelft.htable.protocol.client.{ClientService, ClientServiceHandler}
 import nl.tudelft.htable.protocol.internal.{InternalService, InternalServiceHandler}
-import nl.tudelft.htable.server.core.services.{AdminServiceImpl, ClientServiceImpl, InternalServiceImpl}
 import nl.tudelft.htable.server.core.util.AkkaServiceHandler
 
 import scala.concurrent.duration._

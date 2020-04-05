@@ -76,12 +76,12 @@ object NodeActor {
         promise.success(Done)
         Behaviors.same
       case Read(query, promise) =>
-        context.log.info(s"READ $query")
+        context.log.debug(s"READ $query")
         query match {
           case Get(table, key) =>
             tablets.rangeTo(Tablet(table, RowRange.leftBounded(key))).lastOption match {
               case Some((_, driver)) => promise.success(driver.read(query))
-              case None              => promise.success(Source.empty)
+              case None              => promise.failure(NotServingTabletException(s"The key $key is not served"))
             }
           case Scan(table, range, reversed) =>
             val start = Tablet(table, RowRange.leftBounded(range.start))
@@ -96,11 +96,11 @@ object NodeActor {
         }
         Behaviors.same
       case Mutate(mutation, promise) =>
-        context.log.info(s"MUTATE $mutation")
+        context.log.debug(s"MUTATE $mutation")
 
         tablets.rangeTo(Tablet(mutation.table, RowRange.leftBounded(mutation.key))).lastOption match {
           case Some((_, driver)) => promise.complete(Try { driver.mutate(mutation) }.map(_ => Done))
-          case None              => promise.failure(new IllegalArgumentException())
+          case None              => promise.failure(NotServingTabletException(s"The key ${mutation.key} is not served"))
         }
         Behaviors.same
     }
