@@ -15,7 +15,6 @@ import org.apache.hadoop.fs.FileSystem
 import org.rogach.scallop.{ScallopConf, ScallopOption}
 
 import scala.collection.Seq
-import scala.util.Properties
 
 /**
  * Main class of the HugeTable server program.

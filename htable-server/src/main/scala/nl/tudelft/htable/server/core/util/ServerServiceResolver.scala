@@ -1,12 +1,12 @@
 package nl.tudelft.htable.server.core.util
 
-import akka.{Done, NotUsed}
 import akka.stream.scaladsl.Source
+import akka.{Done, NotUsed}
 import nl.tudelft.htable.client.ServiceResolver
 import nl.tudelft.htable.core.Node
-import nl.tudelft.htable.protocol.admin.{AdminService, AdminServiceClient, CreateTableRequest, CreateTableResponse, DeleteTableRequest, DeleteTableResponse, InvalidateRequest, InvalidateResponse, SplitTableRequest, SplitTableResponse}
-import nl.tudelft.htable.protocol.client.{ClientService, ClientServiceClient, MutateRequest, MutateResponse, ReadRequest, ReadResponse}
-import nl.tudelft.htable.protocol.internal.{AssignRequest, AssignResponse, InternalService, InternalServiceClient, PingRequest, PingResponse, ReportRequest, ReportResponse, SplitRequest, SplitResponse}
+import nl.tudelft.htable.protocol.admin._
+import nl.tudelft.htable.protocol.client._
+import nl.tudelft.htable.protocol.internal._
 
 import scala.concurrent.{Future, Promise}
 

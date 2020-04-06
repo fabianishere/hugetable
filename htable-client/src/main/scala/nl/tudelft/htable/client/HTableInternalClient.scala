@@ -1,7 +1,6 @@
 package nl.tudelft.htable.client
 
 import akka.Done
-import akka.util.ByteString
 import nl.tudelft.htable.core.{Node, Tablet}
 
 import scala.concurrent.Future

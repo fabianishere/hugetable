@@ -1,13 +1,13 @@
 package nl.tudelft.htable.server.core
 
 import akka.Done
-import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector}
 import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector}
 import akka.stream.Materializer
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
 import nl.tudelft.htable.client.HTableInternalClient
-import nl.tudelft.htable.core.{RowCell, RowMutation, RowRange, Scan, Tablet, TabletState}
+import nl.tudelft.htable.core._
 
 import scala.concurrent.{ExecutionContext, Promise}
 
@@ -16,6 +16,7 @@ import scala.concurrent.{ExecutionContext, Promise}
  * splitting a table.
  */
 object AdminActor {
+
   /**
    * Commands accepted by this actor.
    */
@@ -108,7 +109,8 @@ object AdminActor {
         if (table.equalsIgnoreCase("METADATA")) {
           promise.failure(new IllegalArgumentException("Refusing to remove METADATA"))
         } else {
-          client.read(Scan("METADATA", RowRange.leftBounded(ByteString(table))))
+          client
+            .read(Scan("METADATA", RowRange.leftBounded(ByteString(table))))
             .takeWhile { row =>
               row.cells
                 .find(_.qualifier == ByteString("table"))

@@ -6,7 +6,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hbase.client.{ColumnFamilyDescriptorBuilder, RegionInfoBuilder, TableDescriptorBuilder}
 import org.apache.hadoop.hbase.regionserver.{HRegion, MemStoreLAB}
 import org.apache.hadoop.hbase.wal.WALFactory
-import org.apache.hadoop.hbase.{HConstants, HTableDescriptor, TableName}
+import org.apache.hadoop.hbase.{HConstants, TableName}
 
 /**
  * A [StorageDriver] that uses HBase.

@@ -1,7 +1,7 @@
 package nl.tudelft.htable.storage.hbase
 
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.hbase.client.{RegionInfo, TableDescriptor}
+import org.apache.hadoop.hbase.client.RegionInfo
 import org.apache.hadoop.hbase.io.hfile.CacheConfig
 import org.apache.hadoop.hbase.regionserver.{HRegion, HRegionFileSystem, HStoreFile}
 

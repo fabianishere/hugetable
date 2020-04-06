@@ -4,8 +4,6 @@ import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, 
 import java.net.InetSocketAddress
 
 import akka.util.ByteString
-import com.google.protobuf
-import scalapb.TypeMapper
 
 import scala.language.implicitConversions
 

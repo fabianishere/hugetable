@@ -2,7 +2,6 @@ package nl.tudelft.htable.client
 
 import akka.actor.ActorSystem
 import akka.grpc.GrpcClientSettings
-import akka.stream.Materializer
 import nl.tudelft.htable.core.Node
 import nl.tudelft.htable.protocol.admin.AdminServiceClient
 import nl.tudelft.htable.protocol.client.ClientServiceClient

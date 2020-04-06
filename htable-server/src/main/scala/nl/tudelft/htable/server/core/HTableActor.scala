@@ -70,9 +70,9 @@ object HTableActor {
           new ServerServiceResolver(
             self,
             new CachingServiceResolver(new DefaultServiceResolverImpl(context.system.toClassic)),
-              clientService,
-              adminService,
-              internalService)
+            clientService,
+            adminService,
+            internalService)
         )
 
         // Spawn the gRPC services actor
@@ -152,14 +152,19 @@ object HTableActor {
           case NodeEvent(NodeActor.Invalidated(tablets)) =>
             context.log.info("Invalidating tablets")
             val time = System.currentTimeMillis()
-            Future.reduceLeft(tablets.map { case (tablet, state) =>
-              val mutation = RowMutation("METADATA", ByteString(tablet.table) ++ tablet.range.start)
-                .put(RowCell(ByteString("table"), time, ByteString(tablet.table)))
-                .put(RowCell(ByteString("start-key"), time, tablet.range.start))
-                .put(RowCell(ByteString("end-key"), time, tablet.range.end))
-                .put(RowCell(ByteString("state"), time, ByteString(state.id)))
-              client.mutate(mutation)
-            })((x, _) => x).flatMap { _ => client.invalidate(tablets.keys.toSeq) }
+            Future
+              .reduceLeft(tablets.map {
+                case (tablet, state) =>
+                  val mutation = RowMutation("METADATA", ByteString(tablet.table) ++ tablet.range.start)
+                    .put(RowCell(ByteString("table"), time, ByteString(tablet.table)))
+                    .put(RowCell(ByteString("start-key"), time, tablet.range.start))
+                    .put(RowCell(ByteString("end-key"), time, tablet.range.end))
+                    .put(RowCell(ByteString("state"), time, ByteString(state.id)))
+                  client.mutate(mutation)
+              })((x, _) => x)
+              .flatMap { _ =>
+                client.invalidate(tablets.keys.toSeq)
+              }
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }

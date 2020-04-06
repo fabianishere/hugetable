@@ -2,14 +2,14 @@ package nl.tudelft.htable.client
 
 import java.nio.charset.StandardCharsets
 
-import akka.{Done, NotUsed}
 import akka.actor.ActorSystem
 import akka.stream.Materializer
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
-import nl.tudelft.htable.core.{Get, Node, Order, Query, Row, RowMutation, RowRange, Scan, Tablet, TabletState}
+import akka.{Done, NotUsed}
+import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol.CoreAdapters
-import nl.tudelft.htable.protocol.admin.{CreateTableRequest, DeleteTableRequest, InvalidateRequest, SplitTableRequest}
+import nl.tudelft.htable.protocol.admin.{CreateTableRequest, DeleteTableRequest, InvalidateRequest}
 import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
 import nl.tudelft.htable.protocol.internal.{AssignRequest, PingRequest, ReportRequest, SplitRequest}
 import org.apache.curator.framework.CuratorFramework
@@ -56,12 +56,14 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
       .map(_ => Done)
   }
 
-
   override def split(tablet: Tablet, splitKey: ByteString): Future[Done] = {
     resolve(tablet)
-      .flatMapConcat { case (node, _) =>
-        Source.future(resolver.openInternal(node)
-          .split(SplitRequest(Some(tablet), splitKey)))
+      .flatMapConcat {
+        case (node, _) =>
+          Source.future(
+            resolver
+              .openInternal(node)
+              .split(SplitRequest(Some(tablet), splitKey)))
       }
       .map(_ => Done)
       .runWith(Sink.head)
@@ -133,7 +135,7 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
     val rootAddress = resolveRoot()
     val rootClient = resolver.openClient(rootAddress)
 
-    // Append a character to range
+    // Append a character to range since it is exclusive on the right end
     val metaKey =
       if (tablet.table.equalsIgnoreCase("METADATA"))
         ByteString("METADATA") ++ tablet.range.end ++ ByteString(9)
@@ -142,15 +144,18 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
 
     val meta: Source[(Node, Tablet), NotUsed] =
       read(Scan("METADATA", RowRange.rightBounded(metaKey), reversed = true), rootClient)
-        .takeWhile(row => Order.keyOrdering.gt(row.key, tablet.range.start), inclusive = true)
+        .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
+        .takeWhile(row =>
+          row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains("METADATA"))
         .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
         .mapConcat[Row](identity)
         .mapConcat[(Node, Tablet)] { row =>
           val res = for {
             startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
             endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
+            table <- row.cells.find(_.qualifier == ByteString("table"))
             range = RowRange(startKey.value, endKey.value)
-            metaTablet = Tablet(tablet.table, range)
+            metaTablet = Tablet(table.value.utf8String, range)
             state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
             if state == TabletState.Served
             nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
@@ -166,26 +171,32 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
     }
 
     meta.flatMapConcat {
-      case (node, metaTablet) =>
-        val metaClient = resolver.openClient(node)
-        val tabletKey = Order.keyOrdering.min(ByteString(tablet.table) ++ tablet.range.end, metaTablet.range.end)
+      case (metaNode, metaTablet) =>
+        val metaClient = resolver.openClient(metaNode)
+        var tabletKey = ByteString(tablet.table) ++ tablet.range.end ++ ByteString(9, 9)
+        if (metaTablet.range.isRightBounded) {
+          tabletKey = Order.keyOrdering.min(tabletKey, metaTablet.range.end)
+        }
         read(Scan("METADATA", RowRange.rightBounded(tabletKey), reversed = true), metaClient)
-          .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start))
+          .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
+          .takeWhile(row =>
+            row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains(tablet.table))
           .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
           .mapConcat[Row](identity)
           .mapConcat[(Node, Tablet)] { row =>
             val res = for {
               startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
               endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
+              table <- row.cells.find(_.qualifier == ByteString("table"))
               range = RowRange(startKey.value, endKey.value)
-              metaTablet = Tablet(tablet.table, range)
+              targetTablet = Tablet(table.value.utf8String, range)
               state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
               if state == TabletState.Served
               nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
               uid = nodeCell.value.utf8String
               metaAddress <- Try { CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid")) }.toOption
-              node = Node(uid, metaAddress)
-            } yield (node, metaTablet)
+              targetNode = Node(uid, metaAddress)
+            } yield (targetNode, targetTablet)
             res.map(Seq(_)).getOrElse(Seq())
           }
     }
