@@ -19,6 +19,8 @@ import scala.jdk.CollectionConverters._
  */
 class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet) extends TabletDriver {
 
+  var mutations = 0
+
   /**
    * Perform the specified mutation in the tablet.
    */
@@ -40,8 +42,10 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
 
     region.put(put)
 
-    // Force flush for now to not lose changes when terminating the process
-    region.flush(true)
+    mutations += 1
+    if((mutations % 5000) == 0){
+      region.flush(true)
+    }
   }
 
   /**
@@ -96,6 +100,8 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
   }
 
   override def split(splitKey: ByteString): (Tablet, Tablet) = {
+    region.flush(true)
+
     val leftTablet = Tablet(tablet.table, RowRange(tablet.range.start, splitKey))
     val leftDaughter = RegionInfoBuilder
       .newBuilder(region.getTableDescriptor.getTableName)
@@ -121,7 +127,11 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
     (leftTablet, rightTablet)
   }
 
-  override def close(): Unit = region.close()
+  override def close(): Unit = {
+    // Force flush for now to not lose changes when terminating the process
+    region.flush(true)
+    region.close()
+  }
 
   /**
    * Convert to a HBase cell.

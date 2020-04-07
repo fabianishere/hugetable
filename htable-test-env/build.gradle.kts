@@ -16,6 +16,6 @@ dependencies {
     runtimeOnly("org.slf4j:slf4j-simple:${Library.SLF4J}")
 
     implementation("org.apache.curator:curator-test:${Library.CURATOR}")
-    implementation("org.apache.hadoop:hadoop-minicluster:3.2.1")
+    implementation("org.apache.hadoop:hadoop-minicluster:3.1.3")
 }
 
