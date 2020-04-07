@@ -4,7 +4,8 @@ import akka.actor.typed._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
 import akka.util.ByteString
-import nl.tudelft.htable.client.{CachingServiceResolver, DefaultServiceResolverImpl, HTableClient, HTableInternalClient}
+import nl.tudelft.htable.client.impl.DefaultServiceResolverImpl
+import nl.tudelft.htable.client.{CachingServiceResolver, HTableClient, HTableInternalClient}
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.server.core.services.{AdminServiceImpl, ClientServiceImpl, InternalServiceImpl}
 import nl.tudelft.htable.server.core.util.ServerServiceResolver

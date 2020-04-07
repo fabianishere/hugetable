@@ -4,6 +4,7 @@ import akka.actor.ActorSystem
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import akka.{Done, NotUsed}
+import nl.tudelft.htable.client.impl.{DefaultServiceResolverImpl, HTableClientImpl}
 import nl.tudelft.htable.core._
 import org.apache.curator.framework.CuratorFramework
 

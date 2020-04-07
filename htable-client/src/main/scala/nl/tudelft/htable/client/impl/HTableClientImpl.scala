@@ -1,4 +1,4 @@
-package nl.tudelft.htable.client
+package nl.tudelft.htable.client.impl
 
 import java.nio.charset.StandardCharsets
 
@@ -7,6 +7,7 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
 import akka.{Done, NotUsed}
+import nl.tudelft.htable.client.{HTableInternalClient, ServiceResolver}
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol.CoreAdapters
 import nl.tudelft.htable.protocol.admin.{CreateTableRequest, DeleteTableRequest, InvalidateRequest}
@@ -25,9 +26,9 @@ import scala.util.Try
  * @param actorSystem The actor system to drive the client.
  * @param resolver The resolver used to connect to the nodes.
  */
-private class HTableClientImpl(private val zookeeper: CuratorFramework,
-                               private val actorSystem: ActorSystem,
-                               private val resolver: ServiceResolver)
+private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
+                                       private val actorSystem: ActorSystem,
+                                       private val resolver: ServiceResolver)
     extends HTableInternalClient {
   implicit val sys: ActorSystem = actorSystem
   implicit val mat: Materializer = Materializer(sys)
@@ -58,6 +59,7 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
 
   override def split(tablet: Tablet, splitKey: ByteString): Future[Done] = {
     resolve(tablet)
+      .via(new RequireOne(() => new IllegalArgumentException(s"Table ${tablet.table} not found")))
       .flatMapConcat {
         case (node, _) =>
           Source.future(
@@ -80,14 +82,19 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
       case Scan(table, range, _) => resolve(Tablet(table, range))
     }
 
-    nodes.flatMapConcat {
-      case (node, tablet) =>
-        val updatedQuery = query match {
-          case Scan(table, _, reversed) => Scan(table, tablet.range, reversed)
-          case _                        => query
-        }
-        read(node, updatedQuery)
-    }
+    nodes
+      .via(new RequireOne(() => new IllegalArgumentException(s"Table ${query.table} not found")))
+      .flatMapConcat {
+        case (node, tablet) =>
+          query match {
+            case Get(table, key) =>
+              read(node, query)
+                .via(new RequireOne(() =>
+                  new IllegalArgumentException(s"Unknown key '${key.utf8String}' in table ${table}")))
+            case Scan(table, _, reversed) =>
+              read(node, Scan(table, tablet.range, reversed))
+          }
+      }
   }
 
   private def read(query: Query, client: ClientServiceClient): Source[Row, NotUsed] = {
@@ -102,7 +109,8 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
   }
 
   override def mutate(mutation: RowMutation): Future[Done] = {
-    resolve(Tablet(mutation.table, RowRange(mutation.key, mutation.key ++ ByteString(9, 9))))
+    resolve(Tablet(mutation.table, RowRange(mutation.key, mutation.key ++ ByteString(9))))
+      .via(new RequireOne(() => new IllegalArgumentException(s"Table ${mutation.table} not found")))
       .flatMapConcat {
         case (node, _) => Source.future(mutate(node, mutation))
       }
@@ -150,19 +158,7 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
         .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
         .mapConcat[Row](identity)
         .mapConcat[(Node, Tablet)] { row =>
-          val res = for {
-            startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
-            endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
-            table <- row.cells.find(_.qualifier == ByteString("table"))
-            range = RowRange(startKey.value, endKey.value)
-            metaTablet = Tablet(table.value.utf8String, range)
-            state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
-            if state == TabletState.Served
-            nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
-            uid = nodeCell.value.utf8String
-            metaAddress <- Try { CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid")) }.toOption
-            node = Node(uid, metaAddress)
-          } yield (node, metaTablet)
+          val res = parseMeta(row)
           res.map(Seq(_)).getOrElse(Seq())
         }
 
@@ -170,36 +166,44 @@ private class HTableClientImpl(private val zookeeper: CuratorFramework,
       return meta
     }
 
-    meta.flatMapConcat {
-      case (metaNode, metaTablet) =>
-        val metaClient = resolver.openClient(metaNode)
-        var tabletKey = ByteString(tablet.table) ++ tablet.range.end ++ ByteString(9, 9)
-        if (metaTablet.range.isRightBounded) {
-          tabletKey = Order.keyOrdering.min(tabletKey, metaTablet.range.end)
-        }
-        read(Scan("METADATA", RowRange.rightBounded(tabletKey), reversed = true), metaClient)
-          .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
-          .takeWhile(row =>
-            row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains(tablet.table))
-          .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
-          .mapConcat[Row](identity)
-          .mapConcat[(Node, Tablet)] { row =>
-            val res = for {
-              startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
-              endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
-              table <- row.cells.find(_.qualifier == ByteString("table"))
-              range = RowRange(startKey.value, endKey.value)
-              targetTablet = Tablet(table.value.utf8String, range)
-              state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
-              if state == TabletState.Served
-              nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
-              uid = nodeCell.value.utf8String
-              metaAddress <- Try { CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid")) }.toOption
-              targetNode = Node(uid, metaAddress)
-            } yield (targetNode, targetTablet)
-            res.map(Seq(_)).getOrElse(Seq())
+    meta
+      .via(new RequireOne(() => new IllegalArgumentException(s"Unknown table ${tablet.table}")))
+      .flatMapConcat {
+        case (metaNode, metaTablet) =>
+          val metaClient = resolver.openClient(metaNode)
+          var tabletKey = ByteString(tablet.table) ++ tablet.range.end ++ ByteString(9, 9)
+          if (metaTablet.range.isRightBounded) {
+            tabletKey = Order.keyOrdering.min(tabletKey, metaTablet.range.end)
           }
-    }
+          read(Scan("METADATA", RowRange.rightBounded(tabletKey), reversed = true), metaClient)
+            .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
+            .takeWhile(row =>
+              row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains(tablet.table))
+            .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
+            .mapConcat[Row](identity)
+            .mapConcat[(Node, Tablet)] { row =>
+              val res = parseMeta(row)
+              res.map(Seq(_)).getOrElse(Seq())
+            }
+      }
+  }
+
+  private def parseMeta(row: Row): Option[(Node, Tablet)] = {
+    for {
+      startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
+      endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
+      table <- row.cells.find(_.qualifier == ByteString("table"))
+      range = RowRange(startKey.value, endKey.value)
+      targetTablet = Tablet(table.value.utf8String, range)
+      state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
+      if state == TabletState.Served
+      nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
+      uid = nodeCell.value.utf8String
+      metaAddress <- Try {
+        CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid"))
+      }.toOption
+      targetNode = Node(uid, metaAddress)
+    } yield (targetNode, targetTablet)
   }
 
   private def resolveRoot(): Node = {

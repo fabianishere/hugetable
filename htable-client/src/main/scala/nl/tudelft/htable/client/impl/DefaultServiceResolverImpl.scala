@@ -1,7 +1,8 @@
-package nl.tudelft.htable.client
+package nl.tudelft.htable.client.impl
 
 import akka.actor.ActorSystem
 import akka.grpc.GrpcClientSettings
+import nl.tudelft.htable.client.ServiceResolver
 import nl.tudelft.htable.core.Node
 import nl.tudelft.htable.protocol.admin.AdminServiceClient
 import nl.tudelft.htable.protocol.client.ClientServiceClient

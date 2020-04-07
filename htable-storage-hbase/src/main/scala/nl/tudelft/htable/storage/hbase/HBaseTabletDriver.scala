@@ -51,17 +51,22 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
     Source.fromIterator[Row] { () =>
       query match {
         case core.Get(_, key) =>
-          val result = region.get(new Get(key.toArray))
-          if (result.getExists)
-            Iterator(Row(ByteString(result.getRow), result.listCells().asScala.map(fromHBase).toSeq))
-          else
+          val get = new Get(key.toArray)
+          get.setCacheBlocks(true) // Enable caching
+          get.addFamily("hregion".getBytes("UTF-8"))
+          get.readAllVersions()
+          val result = region.get(get)
+          if (result.isEmpty)
             Iterator()
+          else
+            Iterator(Row(ByteString(result.getRow), result.listCells().asScala.map(fromHBase).toSeq))
         case core.Scan(_, range, reversed) =>
           // Note that the start/end row are also reversed when we scan in reverse order due
           // to HBase behavior
           val startRow = if (reversed) range.end.toArray else range.start.toArray
           val endRow = if (reversed) range.start.toArray else range.end.toArray
           val scan = new Scan()
+            .setCacheBlocks(true) // Enable caching
             .withStartRow(startRow, !reversed)
             .withStopRow(endRow, reversed)
             .setReversed(reversed)
