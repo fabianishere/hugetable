@@ -7,7 +7,7 @@ import akka.actor.typed.ActorSystem
 import com.typesafe.config.ConfigFactory
 import nl.tudelft.htable.core.Node
 import nl.tudelft.htable.server.core.HTableActor
-import nl.tudelft.htable.storage.hbase.HBaseStorageDriver
+import nl.tudelft.htable.storage.hbase.{HBaseStorageDriver, HBaseStorageDriverProvider}
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.hadoop.conf.Configuration
@@ -42,7 +42,7 @@ object Main {
     val fs = FileSystem.get(hconf)
 
     val node = Node(UUID.randomUUID().toString, new InetSocketAddress("localhost", conf.port()))
-    val driver = new HBaseStorageDriver(fs)
+    val driver = new HBaseStorageDriverProvider(fs)
     ActorSystem(HTableActor(node, zookeeper, driver), "htable", actorConf)
   }
 

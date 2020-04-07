@@ -9,7 +9,7 @@ import nl.tudelft.htable.client.{CachingServiceResolver, HTableClient, HTableInt
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.server.core.services.{AdminServiceImpl, ClientServiceImpl, InternalServiceImpl}
 import nl.tudelft.htable.server.core.util.ServerServiceResolver
-import nl.tudelft.htable.storage.StorageDriver
+import nl.tudelft.htable.storage.{StorageDriver, StorageDriverProvider}
 import org.apache.curator.framework.CuratorFramework
 
 import scala.collection.mutable
@@ -42,9 +42,9 @@ object HTableActor {
    *
    * @param self The node to represent.
    * @param zk The ZooKeeper client.
-   * @param storageDriver The storage driver to use.
+   * @param sdp The storage driver to use.
    */
-  def apply(self: Node, zk: CuratorFramework, storageDriver: StorageDriver): Behavior[Command] =
+  def apply(self: Node, zk: CuratorFramework, sdp: StorageDriverProvider): Behavior[Command] =
     Behaviors
       .setup[Command] { context =>
         implicit val sys: ActorSystem[Nothing] = context.system
@@ -52,7 +52,7 @@ object HTableActor {
 
         // Spawn the node actor
         val nodeAdapter = context.messageAdapter(HTableActor.NodeEvent)
-        val nodeActor = context.spawn(NodeActor(self, storageDriver, nodeAdapter), name = "node")
+        val nodeActor = context.spawn(NodeActor(self, sdp, nodeAdapter), name = "node")
         // Kill ourselves if the child dies
         context.watch(nodeActor)
 

@@ -1,13 +1,13 @@
 package nl.tudelft.htable.server.core
 
 import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.{ActorRef, Behavior}
+import akka.actor.typed.{ActorRef, Behavior, PostStop}
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.core.TabletState.TabletState
 import nl.tudelft.htable.core._
-import nl.tudelft.htable.storage.{StorageDriver, TabletDriver}
+import nl.tudelft.htable.storage.{StorageDriver, StorageDriverProvider, TabletDriver}
 
 import scala.collection.mutable
 import scala.concurrent.Promise
@@ -67,13 +67,13 @@ object NodeActor {
    * Construct the behavior of the node actor.
    *
    * @param self The node that we represent.
-   * @param storageDriver The driver to use for accessing the data storage.
+   * @param sdp The driver to use for accessing the data storage.
    * @param listener The listener to emit events to.
    */
-  def apply(self: Node, storageDriver: StorageDriver, listener: ActorRef[Event]): Behavior[Command] = Behaviors.setup {
+  def apply(self: Node, sdp: StorageDriverProvider, listener: ActorRef[Event]): Behavior[Command] = Behaviors.setup {
     context =>
       context.log.info(s"Starting actor for node $self")
-
+      val storageDriver = sdp.create(self)
       val tablets = new mutable.TreeMap[Tablet, TabletDriver]()
 
       /**
@@ -86,7 +86,7 @@ object NodeActor {
           .lastOption
       }
 
-      Behaviors.receiveMessagePartial {
+      Behaviors.receiveMessagePartial[Command] {
         case Ping(promise) =>
           promise.success(Done)
           Behaviors.same
@@ -99,7 +99,7 @@ object NodeActor {
 
           // Spawn new tablet managers
           for (tablet <- newTablets) {
-            tablets.put(tablet, storageDriver.openTablet(tablet))
+            tablets.put(tablet, storageDriver.createTablet(tablet))
           }
 
           promise.success(Done)
@@ -158,5 +158,11 @@ object NodeActor {
           }
           Behaviors.same
       }
+        .receiveSignal {
+          case (_, PostStop) =>
+            tablets.foreach(_._2.close())
+            storageDriver.close()
+            Behaviors.stopped
+        }
   }
 }

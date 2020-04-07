@@ -9,7 +9,7 @@ import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
 import org.apache.hadoop.hbase.client.{Get, Put, RegionInfoBuilder, Scan}
-import org.apache.hadoop.hbase.regionserver.{HRegion, RegionScanner}
+import org.apache.hadoop.hbase.regionserver.{HRegion, Region, RegionScanner}
 import org.apache.hadoop.hbase.{Cell, CellBuilderFactory, CellBuilderType, CellUtil}
 
 import scala.jdk.CollectionConverters._
@@ -40,12 +40,10 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
       })
     }
 
+    region.startRegionOperation(Region.Operation.PUT)
     region.put(put)
-
-    mutations += 1
-    if((mutations % 5000) == 0){
-      region.flush(true)
-    }
+    region.flush(false)
+    region.closeRegionOperation(Region.Operation.PUT)
   }
 
   /**
@@ -59,12 +57,15 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
           get.setCacheBlocks(true) // Enable caching
           get.addFamily("hregion".getBytes("UTF-8"))
           get.readAllVersions()
+          region.startRegionOperation(Region.Operation.GET)
           val result = region.get(get)
+          region.closeRegionOperation(Region.Operation.GET)
           if (result.isEmpty)
             Iterator()
           else
             Iterator(Row(ByteString(result.getRow), result.listCells().asScala.map(fromHBase).toSeq))
         case core.Scan(_, range, reversed) =>
+          region.startRegionOperation(Region.Operation.SCAN)
           // Note that the start/end row are also reversed when we scan in reverse order due
           // to HBase behavior
           val startRow = if (reversed) range.end.toArray else range.start.toArray
@@ -87,6 +88,11 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
             override def next(): Option[Row] = {
               cells.clear()
               more = scanner.nextRaw(cells)
+
+              if (!more) {
+                region.closeRegionOperation(Region.Operation.SCAN)
+              }
+
               val scalaCells = cells.asScala
               scalaCells.headOption.map { value =>
                 val rowKey = ByteString(CellUtil.cloneRow(value))
@@ -120,9 +126,11 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
       .setRegionId(region.getRegionInfo.getRegionId + 1)
       .build
 
+    region.startRegionOperation(Region.Operation.SPLIT_REGION)
     val regionFs = region.getRegionFileSystem
     regionFs.createSplitsDir(leftDaughter, rightDaughter)
     SplitUtils.splitStores(region, leftDaughter, rightDaughter)
+    region.closeRegionOperation(Region.Operation.SPLIT_REGION)
 
     (leftTablet, rightTablet)
   }

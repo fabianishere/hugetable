@@ -1,9 +1,10 @@
 package nl.tudelft.htable.storage.hbase
 
-import nl.tudelft.htable.core.Tablet
+import nl.tudelft.htable.core.{Node, Tablet}
 import nl.tudelft.htable.storage.{StorageDriver, TabletDriver}
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.hadoop.hbase.client.{ColumnFamilyDescriptorBuilder, RegionInfoBuilder, TableDescriptorBuilder}
+import org.apache.hadoop.hbase.client.{ColumnFamilyDescriptorBuilder, Durability, RegionInfoBuilder, TableDescriptorBuilder}
 import org.apache.hadoop.hbase.regionserver.{HRegion, MemStoreLAB}
 import org.apache.hadoop.hbase.wal.WALFactory
 import org.apache.hadoop.hbase.{HConstants, TableName}
@@ -11,28 +12,30 @@ import org.apache.hadoop.hbase.{HConstants, TableName}
 /**
  * A [StorageDriver] that uses HBase.
  */
-class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
+class HBaseStorageDriver(val node: Node, val fs: FileSystem) extends StorageDriver {
   import org.apache.hadoop.hbase.regionserver.ChunkCreator
 
   ChunkCreator.initialize(MemStoreLAB.CHUNK_SIZE_DEFAULT, false, 0, 0, 0, null)
+
+  private val conf = new Configuration(fs.getConf)
+  private val rootDir = new Path("htable-regions")
+  conf.set(HConstants.HBASE_DIR, rootDir.toString)
+  conf.set("hbase.wal.provider", "org.apache.hadoop.hbase.wal.DisabledWALProvider")
+  private val factory = new WALFactory(conf, s"${node.address.getHostName}_${node.address.getPort}_${System.currentTimeMillis}")
 
   override def openTablet(tablet: Tablet): TabletDriver = createTablet(tablet, open = true)
 
   override def createTablet(tablet: Tablet): TabletDriver = createTablet(tablet, open = false)
 
   private def createTablet(tablet: Tablet, open: Boolean): TabletDriver = {
-    val tableName = TableName.valueOf(tablet.table)
+    val tableName = TableName
+      .valueOf(tablet.table)
     val tableDescriptor = TableDescriptorBuilder
       .newBuilder(tableName)
+      .setDurability(Durability.SYNC_WAL)
       .setColumnFamily(HBaseStorageDriver.columnFamily)
       .build
 
-    val conf = fs.getConf
-    val rootDir = new Path("hregions")
-    conf.set(HConstants.HBASE_DIR, rootDir.toString)
-    conf.set("hbase.wal.provider", "org.apache.hadoop.hbase.wal.DisabledWALProvider")
-
-    val factory = new WALFactory(conf, "hregion-tablet")
     val info = RegionInfoBuilder
       .newBuilder(tableName)
       .setRegionId(0)
@@ -52,7 +55,9 @@ class HBaseStorageDriver(val fs: FileSystem) extends StorageDriver {
     new HBaseTabletDriver(region, tablet)
   }
 
-  override def close(): Unit = {}
+  override def close(): Unit = {
+    factory.close()
+  }
 }
 
 object HBaseStorageDriver {

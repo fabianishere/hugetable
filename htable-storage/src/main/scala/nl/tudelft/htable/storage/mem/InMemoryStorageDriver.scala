@@ -1,6 +1,6 @@
 package nl.tudelft.htable.storage.mem
 
-import nl.tudelft.htable.core.Tablet
+import nl.tudelft.htable.core.{Node, Tablet}
 import nl.tudelft.htable.storage.{StorageDriver, TabletDriver}
 
 /**
