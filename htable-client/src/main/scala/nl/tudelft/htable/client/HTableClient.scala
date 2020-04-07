@@ -37,6 +37,11 @@ trait HTableClient {
   def split(tablet: Tablet, splitKey: ByteString): Future[Done]
 
   /**
+   * Invalidate the specified tablets.
+   */
+  def invalidate(tablets: Seq[Tablet]): Future[Done]
+
+  /**
    * Query the rows of a table on a particular node.
    */
   def read(node: Node, query: Query): Source[Row, NotUsed]

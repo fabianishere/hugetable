@@ -1,5 +1,6 @@
 package nl.tudelft.htable.client.cli
 
+import akka.Done
 import akka.actor.ActorSystem
 import akka.stream.Materializer
 import akka.util.ByteString
@@ -7,10 +8,12 @@ import nl.tudelft.htable.client.HTableClient
 import nl.tudelft.htable.core._
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
-import org.rogach.scallop.{ScallopConf, ScallopOption, Subcommand}
+import org.jline.reader.{EndOfFileException, LineReaderBuilder, UserInterruptException}
+import org.rogach.scallop.{ScallopConf, ScallopOption, Subcommand, Util}
 
 import scala.collection.Seq
-import scala.concurrent.ExecutionContextExecutor
+import scala.concurrent.duration._
+import scala.concurrent.{Await, ExecutionContextExecutor, Future}
 import scala.util.{Failure, Success}
 
 /**
@@ -25,6 +28,7 @@ object Main {
    */
   def main(args: Array[String]): Unit = {
     val conf = new Conf(args)
+    conf.verify()
     val connectionString = conf.zookeeper.getOrElse(List()).mkString(",")
     val zookeeper = CuratorFrameworkFactory.newClient(
       connectionString,
@@ -33,10 +37,8 @@ object Main {
     zookeeper.start()
     zookeeper.blockUntilConnected()
 
-    implicit val sys: ActorSystem = ActorSystem("client")
-    implicit val mat: Materializer = Materializer(sys)
+    val sys = ActorSystem("client")
     implicit val ec: ExecutionContextExecutor = sys.dispatcher
-
     val client = HTableClient(zookeeper)
 
     def stop(): Unit = {
@@ -45,28 +47,71 @@ object Main {
       sys.terminate()
     }
 
+    if (conf.interactive.getOrElse(false)) {
+      val reader = LineReaderBuilder
+        .builder()
+        .appName("htable")
+        .build();
+      val prompt = "htable $ "
+      while (true) {
+        var line: Option[String] = None;
+        try {
+          line = Some(reader.readLine(prompt))
+        } catch {
+          case _: UserInterruptException => // Ignore
+          case _: EndOfFileException =>
+            stop()
+            return
+        }
+
+        line match {
+          case Some(value) =>
+            if (value.trim.equalsIgnoreCase("exit")) {
+              stop()
+              return
+            }
+            try {
+              val commands = new Commands(value.split(" "))
+              commands.verify()
+              val res = Await.result(processCommand(sys, client, commands), 100.seconds)
+              println(res)
+            } catch {
+              case e: Exception => e.printStackTrace()
+            }
+          case None =>
+        }
+      }
+    } else {
+      processCommand(sys, client, conf)
+        .onComplete {
+          case Failure(exception) =>
+            exception.printStackTrace()
+            stop()
+          case Success(value) =>
+            println(value)
+            stop()
+        }
+    }
+  }
+
+  /**
+   * Process the command in the specified [Conf] object.
+   */
+  private def processCommand(actorSystem: ActorSystem, client: HTableClient, conf: Commands): Future[Done] = {
+    implicit val sys: ActorSystem = actorSystem
+    implicit val mat: Materializer = Materializer(sys)
+    implicit val ec: ExecutionContextExecutor = sys.dispatcher
+
     conf.subcommand match {
       case Some(conf.get) =>
         client
           .read(Get(conf.get.table(), ByteString(conf.get.key())))
           .runForeach(printRow)
-          .onComplete {
-            case Failure(exception) =>
-              exception.printStackTrace()
-              stop()
-            case Success(_) => stop()
-          }
       case Some(conf.scan) =>
         val scan = Scan(conf.scan.table(), RowRange(conf.scan.startKey(), conf.scan.endKey()), conf.scan.reversed())
         client
           .read(scan)
           .runForeach(printRow)
-          .onComplete {
-            case Failure(exception) =>
-              exception.printStackTrace()
-              stop()
-            case Success(_) => stop()
-          }
       case Some(conf.put) =>
         val time = conf.put.timestamp.getOrElse(System.currentTimeMillis())
         val mutation: RowMutation = conf.put.cells
@@ -76,12 +121,6 @@ object Main {
           }
         client
           .mutate(mutation)
-          .onComplete {
-            case Failure(exception) =>
-              exception.printStackTrace()
-              stop()
-            case Success(_) => stop()
-          }
       case Some(conf.delete) =>
         val mutation = conf.delete.qualifier.toOption match {
           case Some(value) =>
@@ -92,43 +131,20 @@ object Main {
         }
         client
           .mutate(mutation)
-          .onComplete {
-            case Failure(exception) =>
-              exception.printStackTrace()
-              stop()
-            case Success(_) => stop()
-          }
       case Some(conf.createTable) =>
         client
           .create(conf.createTable.table())
-          .onComplete {
-            case Failure(exception) =>
-              exception.printStackTrace()
-              stop()
-            case Success(_) => stop()
-          }
       case Some(conf.deleteTable) =>
         client
           .delete(conf.createTable.table())
-          .onComplete {
-            case Failure(exception) =>
-              exception.printStackTrace()
-              stop()
-            case Success(_) => stop()
-          }
       case Some(conf.split) =>
         client
           .split(Tablet(conf.split.table(), RowRange.leftBounded(conf.split.startKey())), conf.split.splitKey())
-          .onComplete {
-            case Failure(exception) =>
-              exception.printStackTrace()
-              stop()
-            case Success(_) => stop()
-          }
+      case Some(conf.invalidate) =>
+        client.invalidate(List())
       case _ =>
         conf.printHelp()
-        stop()
-
+        Future.successful(Done)
     }
   }
 
@@ -142,20 +158,9 @@ object Main {
   }
 
   /**
-   * The command line configuration of the application.
-   *
-   * @param arguments The command line arguments passed to the program.
+   * The commands only to parse.
    */
-  private class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
-
-    /**
-     * An option for specifying the ZooKeeper addresses to connect to.
-     */
-    val zookeeper: ScallopOption[List[String]] = opt[List[String]](
-      short = 'z',
-      descr = "The ZooKeeper addresses to connect to",
-      required = true
-    )
+  private class Commands(arguments: Seq[String]) extends ScallopConf(arguments) {
 
     /**
      * A command to obtain the value of a single row.
@@ -296,6 +301,41 @@ object Main {
     }
     addSubcommand(split)
 
-    verify()
+    /**
+     * A command to invalidate the current assignments.
+     */
+    val invalidate = new Subcommand("invalidate")
+    addSubcommand(invalidate)
+
+    errorMessageHandler = { message =>
+      println(Util.format("Error: %s", message))
+    }
+  }
+
+  /**
+   * The command line configuration of the application.
+   *
+   * @param arguments The command line arguments passed to the program.
+   */
+  private class Conf(arguments: Seq[String]) extends Commands(arguments) {
+
+    /**
+     * An option for specifying the ZooKeeper addresses to connect to.
+     */
+    val zookeeper: ScallopOption[List[String]] = opt[List[String]](
+      short = 'z',
+      descr = "The ZooKeeper addresses to connect to",
+      required = true
+    )
+
+    /**
+     * A flag to make an interactive console.
+     */
+    val interactive = opt[Boolean](short = 'i', descr = "Interactive console")
+
+    errorMessageHandler = { message =>
+      Console.err.println(Util.format("[%s] Error: %s", printedName, message))
+      sys.exit(1)
+    }
   }
 }

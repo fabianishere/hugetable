@@ -16,11 +16,6 @@ private[htable] trait HTableInternalClient extends HTableClient {
   def master: Node
 
   /**
-   * Invalidate the specified tablets.
-   */
-  def invalidate(tablets: Seq[Tablet]): Future[Done]
-
-  /**
    * Ping the specified node.
    *
    * @param node The node to ping.

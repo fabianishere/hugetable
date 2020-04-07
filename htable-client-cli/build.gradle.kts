@@ -12,6 +12,7 @@ application {
 
 dependencies {
     implementation(project(":htable-client"))
+    implementation("org.jline:jline:3.14.0")
     implementation("org.rogach:scallop_${Library.SCALA_LIB}:${Library.SCALLOP}")
     runtimeOnly("org.slf4j:slf4j-simple:${Library.SLF4J}")
 }
