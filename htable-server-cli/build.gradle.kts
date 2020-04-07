@@ -15,7 +15,7 @@ dependencies {
     implementation("org.rogach:scallop_${Library.SCALA_LIB}:${Library.SCALLOP}")
     runtimeOnly("org.slf4j:slf4j-simple:${Library.SLF4J}")
 
-    implementation("org.apache.hadoop:hadoop-client:3.2.1")
+    implementation("org.apache.hadoop:hadoop-client:3.0.3")
     implementation(project(":htable-storage-hbase"))
 }
 
