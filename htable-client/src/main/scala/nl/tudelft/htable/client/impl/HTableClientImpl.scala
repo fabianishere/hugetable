@@ -93,10 +93,11 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
                   new IllegalArgumentException(s"Unknown key '${key.utf8String}' in table ${table}")))
             case Scan(table, range, reversed) =>
               val reducedStart = Order.keyOrdering.max(range.start, tablet.range.start)
-              val reducedEnd = if (range.isRightBounded && tablet.range.isRightBounded)
-                Order.keyOrdering.min(range.end, tablet.range.end)
-              else
-                Order.keyOrdering.max(range.end, tablet.range.end)
+              val reducedEnd =
+                if (range.isRightBounded && tablet.range.isRightBounded)
+                  Order.keyOrdering.min(range.end, tablet.range.end)
+                else
+                  Order.keyOrdering.max(range.end, tablet.range.end)
               read(node, Scan(table, RowRange(reducedStart, reducedEnd), reversed))
           }
       }
@@ -178,12 +179,15 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
           val metaClient = resolver.openClient(metaNode)
           var prefixRange = RowRange.prefix(ByteString(tablet.table))
           if (metaTablet.range.isRightBounded) {
-            prefixRange = RowRange(prefixRange.start,
-              Order.keyOrdering.min(prefixRange.end, metaTablet.range.end))
+            prefixRange = RowRange(prefixRange.start, Order.keyOrdering.min(prefixRange.end, metaTablet.range.end))
           }
           read(Scan("METADATA", prefixRange), metaClient)
-            .dropWhile(row => row.cells.find(_.qualifier == ByteString("end-key"))
-              .exists(cell => Order.keyOrdering.lteq(cell.value, tablet.range.start)))
+            .dropWhile(
+              row =>
+                row.cells
+                  .find(_.qualifier == ByteString("end-key"))
+                  .exists(cell =>
+                    if (cell.value.isEmpty) false else Order.keyOrdering.lteq(cell.value, tablet.range.start)))
             .takeWhile(row =>
               row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains(tablet.table))
             .mapConcat[(Node, Tablet)] { row =>

@@ -3,7 +3,7 @@ package nl.tudelft.htable.core
 /**
  * A tablet is a subset of a table.
  */
-final case class Tablet(table: String, range: RowRange) extends Ordered[Tablet] {
+final case class Tablet(table: String, range: RowRange, id: Int = 0) extends Ordered[Tablet] {
   override def compare(that: Tablet): Int = Order.tabletOrdering.compare(this, that)
 }
 

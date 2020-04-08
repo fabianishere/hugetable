@@ -35,7 +35,7 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
     mutation.mutations.foreach {
       case Mutation.PutCell(cell) =>
         shouldPut = true
-        put.add(toHBase(mutation.key, cell, Cell.Type.Put))
+        put.add(toHBase(mutation.key, cell))
       case Mutation.DeleteCell(cell) =>
         shouldDeleteColumn = true
         deleteColumn.addColumn("hregion".getBytes("UTF-8"), cell.qualifier.toArray)
@@ -127,7 +127,7 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
   override def split(splitKey: ByteString): (Tablet, Tablet) = {
     region.flush(true)
 
-    val leftTablet = Tablet(tablet.table, RowRange(tablet.range.start, splitKey))
+    val leftTablet = Tablet(tablet.table, RowRange(tablet.range.start, splitKey), tablet.id + 1)
     val leftDaughter = RegionInfoBuilder
       .newBuilder(region.getTableDescriptor.getTableName)
       .setStartKey(tablet.range.start.toArray)
@@ -136,7 +136,7 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
       .setRegionId(region.getRegionInfo.getRegionId + 1)
       .build
 
-    val rightTablet = Tablet(tablet.table, RowRange(splitKey, tablet.range.end))
+    val rightTablet = Tablet(tablet.table, RowRange(splitKey, tablet.range.end), tablet.id + 1)
     val rightDaughter = RegionInfoBuilder
       .newBuilder(region.getTableDescriptor.getTableName)
       .setStartKey(splitKey.toArray)
@@ -148,6 +148,9 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
     val regionFs = region.getRegionFileSystem
     regionFs.createSplitsDir(leftDaughter, rightDaughter)
     SplitUtils.splitStores(region, leftDaughter, rightDaughter)
+
+    regionFs.commitDaughterRegion(leftDaughter)
+    regionFs.commitDaughterRegion(rightDaughter)
 
     (leftTablet, rightTablet)
   }
@@ -161,10 +164,10 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
   /**
    * Convert to a HBase cell.
    */
-  private def toHBase(row: ByteString, cell: RowCell, cellType: Cell.Type): Cell = {
+  private def toHBase(row: ByteString, cell: RowCell): Cell = {
     val res = CellBuilderFactory.create(CellBuilderType.DEEP_COPY)
     res.setFamily("hregion".getBytes("UTF-8"))
-    res.setType(cellType)
+    res.setType(Cell.Type.Put)
     res.setRow(row.toArray)
     res.setQualifier(cell.qualifier.toArray)
     res.setValue(cell.value.toArray)

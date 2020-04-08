@@ -56,9 +56,9 @@ object WriteTest {
       mutation.put(RowCell(ByteString("row_" + i), time, ByteString(value)))
       val result = client.mutate(mutation)
       Await.result(result, 100.seconds)
-      if((i % 1000) == 0){
+      if ((i % 1000) == 0) {
         val end = System.currentTimeMillis()
-        val avg = 1000.0 / ((end-start) / 1000.0)
+        val avg = 1000.0 / ((end - start) / 1000.0)
         start = System.currentTimeMillis()
         System.out.println("At " + i + " requests total avg p/s: " + avg)
       }

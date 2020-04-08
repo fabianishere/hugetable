@@ -1,11 +1,13 @@
 package nl.tudelft.htable.server.core
 
+import java.nio.ByteOrder
+
 import akka.Done
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector}
 import akka.stream.Materializer
 import akka.stream.scaladsl.{Sink, Source}
-import akka.util.ByteString
+import akka.util.{ByteString, ByteStringBuilder}
 import nl.tudelft.htable.client.HTableInternalClient
 import nl.tudelft.htable.core._
 
@@ -100,7 +102,10 @@ object AdminActor {
           .put(RowCell(ByteString("start-key"), time, ByteString.empty))
           .put(RowCell(ByteString("end-key"), time, ByteString.empty))
           .put(RowCell(ByteString("state"), time, ByteString(TabletState.Unassigned.id)))
-        client.mutate(mutation)
+          .put(RowCell(ByteString("id"), time, new ByteStringBuilder().putInt(0)(ByteOrder.LITTLE_ENDIAN).result()))
+
+        client
+          .mutate(mutation)
           .onComplete { res =>
             listener ! Invalidated(Seq.empty)
             promise.complete(res)

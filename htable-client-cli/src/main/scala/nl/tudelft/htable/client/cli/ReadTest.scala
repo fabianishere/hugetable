@@ -52,9 +52,9 @@ object ReadTest {
     for (i <- 0 until max) {
       val scan: Scan = Scan("Test", RowRange(ByteString("TestRow"), ByteString("TestRow")))
       val result = client.read(scan)
-      if((i % 1000) == 0){
+      if ((i % 1000) == 0) {
         val end = System.currentTimeMillis()
-        val avg = 1000.0 / ((end-start) / 1000.0)
+        val avg = 1000.0 / ((end - start) / 1000.0)
         start = System.currentTimeMillis()
         System.out.println("At " + i + " requests total avg p/s: " + avg)
         result.runForeach(printRow)
@@ -67,7 +67,8 @@ object ReadTest {
    */
   private def printRow(row: Row): Unit = {
     row.cells.foreach { cell =>
-      System.out.println(s"${row.key.utf8String}\t${cell.qualifier.utf8String}\t${cell.timestamp}\t${cell.value.utf8String}")
+      System.out.println(
+        s"${row.key.utf8String}\t${cell.qualifier.utf8String}\t${cell.timestamp}\t${cell.value.utf8String}")
     }
   }
 

@@ -102,7 +102,10 @@ object Main {
   /**
    * Process the command in the specified [Conf] object.
    */
-  private def processCommand(actorSystem: ActorSystem, zookeeper: CuratorFramework, client: HTableClient, conf: Commands): Future[Done] = {
+  private def processCommand(actorSystem: ActorSystem,
+                             zookeeper: CuratorFramework,
+                             client: HTableClient,
+                             conf: Commands): Future[Done] = {
     implicit val sys: ActorSystem = actorSystem
     implicit val mat: Materializer = Materializer(sys)
     implicit val ec: ExecutionContextExecutor = sys.dispatcher
@@ -318,7 +321,8 @@ object Main {
       /**
        * The split point.
        */
-      val splitKey = opt[String](descr = "The key at which to split the table", default = Some("")).map(s => ByteString(s))
+      val splitKey =
+        opt[String](descr = "The key at which to split the table", default = Some("")).map(s => ByteString(s))
     }
     addSubcommand(split)
 

@@ -4,7 +4,12 @@ import nl.tudelft.htable.core.{Node, Tablet}
 import nl.tudelft.htable.storage.{StorageDriver, TabletDriver}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.hadoop.hbase.client.{ColumnFamilyDescriptorBuilder, Durability, RegionInfoBuilder, TableDescriptorBuilder}
+import org.apache.hadoop.hbase.client.{
+  ColumnFamilyDescriptorBuilder,
+  Durability,
+  RegionInfoBuilder,
+  TableDescriptorBuilder
+}
 import org.apache.hadoop.hbase.regionserver.{HRegion, MemStoreLAB}
 import org.apache.hadoop.hbase.wal.WALFactory
 import org.apache.hadoop.hbase.{HConstants, TableName}
@@ -21,7 +26,8 @@ class HBaseStorageDriver(val node: Node, val fs: FileSystem) extends StorageDriv
   private val rootDir = new Path("htable-regions")
   conf.set(HConstants.HBASE_DIR, rootDir.toString)
   conf.set("hbase.wal.provider", "org.apache.hadoop.hbase.wal.DisabledWALProvider")
-  private val factory = new WALFactory(conf, s"${node.address.getHostName}_${node.address.getPort}_${System.currentTimeMillis}")
+  private val factory =
+    new WALFactory(conf, s"${node.address.getHostName}_${node.address.getPort}_${System.currentTimeMillis}")
 
   override def openTablet(tablet: Tablet): TabletDriver = createTablet(tablet, open = true)
 
@@ -38,7 +44,7 @@ class HBaseStorageDriver(val node: Node, val fs: FileSystem) extends StorageDriv
 
     val info = RegionInfoBuilder
       .newBuilder(tableName)
-      .setRegionId(0)
+      .setRegionId(tablet.id)
       .setReplicaId(0)
       .setStartKey(tablet.range.start.toArray)
       .setEndKey(tablet.range.end.toArray)

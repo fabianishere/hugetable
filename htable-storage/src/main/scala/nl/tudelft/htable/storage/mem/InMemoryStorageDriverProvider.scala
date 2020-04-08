@@ -7,6 +7,7 @@ import nl.tudelft.htable.storage.{StorageDriver, StorageDriverProvider}
  * A [StorageDriverProvider] for the [InMemoryStorageDriver].
  */
 object InMemoryStorageDriverProvider extends StorageDriverProvider {
+
   /**
    * Construct a [StorageProvider] for the specified node.
    */

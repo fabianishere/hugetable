@@ -87,86 +87,87 @@ object NodeActor {
           .lastOption
       }
 
-      Behaviors.receiveMessagePartial[Command] {
-        case Ping(promise) =>
-          promise.success(Done)
-          Behaviors.same
-        case Report(promise) =>
-          promise.success(tablets.keys.toSeq)
-          Behaviors.same
-        case Assign(newTablets, promise) =>
-          val newTabletsSet = newTablets.toSet
-          val removeTablets = tablets.keySet.diff(newTabletsSet)
-          val addTablets = newTabletsSet.diff(tablets.keySet)
+      Behaviors
+        .receiveMessagePartial[Command] {
+          case Ping(promise) =>
+            promise.success(Done)
+            Behaviors.same
+          case Report(promise) =>
+            promise.success(tablets.keys.toSeq)
+            Behaviors.same
+          case Assign(newTablets, promise) =>
+            val newTabletsSet = newTablets.toSet
+            val removeTablets = tablets.keySet.diff(newTabletsSet)
+            val addTablets = newTabletsSet.diff(tablets.keySet)
 
-          // Remove tablets
-          for (tablet <- removeTablets) {
-            val driver = tablets.remove(tablet)
-            driver.foreach(_.close())
-          }
+            // Remove tablets
+            for (tablet <- removeTablets) {
+              val driver = tablets.remove(tablet)
+              driver.foreach(_.close())
+            }
 
-          // Spawn new tablet managers
-          for (tablet <- addTablets) {
-            tablets.put(tablet, storageDriver.createTablet(tablet))
-          }
+            // Spawn new tablet managers
+            for (tablet <- addTablets) {
+              tablets.put(tablet, storageDriver.createTablet(tablet))
+            }
 
-          promise.success(Done)
-          Behaviors.same
-        case Read(query, promise) =>
-          context.log.info(s"READ $query")
-          query match {
-            case Get(table, key) =>
-              find(table, key) match {
-                case Some((_, driver)) => promise.success(driver.read(query))
-                case None              => promise.failure(NotServingTabletException(s"The key $key is not served"))
-              }
-            case Scan(table, range, reversed) =>
-              find(table, range.start) match {
-                case Some((_, driver)) =>
-                  // val end = Tablet(table, RowRange.leftBounded(range.end))
-                  // val submap =
-                  //   if (range.isUnbounded) tablets.rangeFrom(start).rangeTo(end) else tablets.range(start, end)
-                  // val source: Source[Row, NotUsed] =
-                  //  Source(if (reversed) submap.toSeq.reverse else submap.toSeq)
-                  //   .flatMapConcat { case (_, driver) => driver.read(query) }
-                  val source = driver.read(query)
-                  promise.success(source)
-                case None =>
-                  promise.failure(new IllegalArgumentException("Start key not in range"))
-              }
-          }
-          Behaviors.same
-        case Mutate(mutation, promise) =>
-          context.log.info(s"MUTATE $mutation")
+            promise.success(Done)
+            Behaviors.same
+          case Read(query, promise) =>
+            context.log.info(s"READ $query")
+            query match {
+              case Get(table, key) =>
+                find(table, key) match {
+                  case Some((_, driver)) => promise.success(driver.read(query))
+                  case None              => promise.failure(NotServingTabletException(s"The key $key is not served"))
+                }
+              case Scan(table, range, reversed) =>
+                find(table, range.start) match {
+                  case Some((_, driver)) =>
+                    // val end = Tablet(table, RowRange.leftBounded(range.end))
+                    // val submap =
+                    //   if (range.isUnbounded) tablets.rangeFrom(start).rangeTo(end) else tablets.range(start, end)
+                    // val source: Source[Row, NotUsed] =
+                    //  Source(if (reversed) submap.toSeq.reverse else submap.toSeq)
+                    //   .flatMapConcat { case (_, driver) => driver.read(query) }
+                    val source = driver.read(query)
+                    promise.success(source)
+                  case None =>
+                    promise.failure(new IllegalArgumentException("Start key not in range"))
+                }
+            }
+            Behaviors.same
+          case Mutate(mutation, promise) =>
+            context.log.info(s"MUTATE $mutation")
 
-          find(mutation.table, mutation.key) match {
-            case Some((_, driver)) =>
-              promise.complete(Try { driver.mutate(mutation) }.map(_ => Done))
-            case None =>
-              promise.failure(NotServingTabletException(s"The key ${mutation.key} is not served"))
-          }
-          Behaviors.same
-        case Split(tablet, splitKey, promise) =>
-          context.log.info(s"Split tablet $tablet at $splitKey")
-          find(tablet.table, tablet.range.start) match {
-            case Some((tablet, driver)) =>
-              promise.complete(Try {
-                val (left, right) = driver.split(splitKey)
+            find(mutation.table, mutation.key) match {
+              case Some((_, driver)) =>
+                promise.complete(Try { driver.mutate(mutation) }.map(_ => Done))
+              case None =>
+                promise.failure(NotServingTabletException(s"The key ${mutation.key} is not served"))
+            }
+            Behaviors.same
+          case Split(tablet, splitKey, promise) =>
+            context.log.info(s"Split tablet $tablet at $splitKey")
+            find(tablet.table, tablet.range.start) match {
+              case Some((tablet, driver)) =>
+                promise.complete(Try {
+                  val (left, right) = driver.split(splitKey)
 
-                val invalidations = new mutable.HashMap[Tablet, TabletState]
-                invalidations(tablet) = TabletState.Closed
-                invalidations(left) = TabletState.Unassigned
-                invalidations(right) = TabletState.Unassigned
+                  val invalidations = new mutable.HashMap[Tablet, TabletState]
+                  invalidations(tablet) = TabletState.Closed
+                  invalidations(left) = TabletState.Unassigned
+                  invalidations(right) = TabletState.Unassigned
 
-                listener ! Invalidated(invalidations.toMap)
+                  listener ! Invalidated(invalidations.toMap)
 
-                Done
-              })
-            case None =>
-              promise.failure(NotServingTabletException(s"The tablet $tablet is not served"))
-          }
-          Behaviors.same
-      }
+                  Done
+                })
+              case None =>
+                promise.failure(NotServingTabletException(s"The tablet $tablet is not served"))
+            }
+            Behaviors.same
+        }
         .receiveSignal {
           case (_, PostStop) =>
             tablets.foreach(_._2.close())

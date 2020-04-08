@@ -1,10 +1,12 @@
 package nl.tudelft.htable.server.core
 
+import java.nio.ByteOrder
+
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector}
 import akka.stream.Materializer
 import akka.stream.typed.scaladsl.ActorSink
-import akka.util.{ByteString, Timeout}
+import akka.util.{ByteString, ByteStringBuilder, Timeout}
 import nl.tudelft.htable.client.HTableInternalClient
 import nl.tudelft.htable.core._
 
@@ -187,6 +189,9 @@ object LoadBalancerActor {
               .put(RowCell(ByteString("end-key"), time, tablet.range.end))
               .put(RowCell(ByteString("node"), time, ByteString(node.uid)))
               .put(RowCell(ByteString("state"), time, ByteString(TabletState.Served.id)))
+              .put(RowCell(ByteString("id"),
+                           time,
+                           new ByteStringBuilder().putInt(tablet.id)(ByteOrder.LITTLE_ENDIAN).result()))
 
             context.log.info(s"Asking $metaNode to update METADATA tablet")
             client.mutate(metaNode, mutation)
@@ -214,7 +219,11 @@ object LoadBalancerActor {
           table <- row.cells.find(_.qualifier == ByteString("table"))
           start <- row.cells.find(_.qualifier == ByteString("start-key"))
           end <- row.cells.find(_.qualifier == ByteString("end-key"))
-          tablet = Tablet(table.value.utf8String, RowRange(start.value, end.value))
+          id = row.cells
+            .find(_.qualifier == ByteString("id"))
+            .map(_.value.iterator.getInt(ByteOrder.LITTLE_ENDIAN))
+            .getOrElse(0)
+          tablet = Tablet(table.value.utf8String, RowRange(start.value, end.value), id)
           state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
           if state != TabletState.Closed // Do not assign closed tablets
           uid = row.cells.find(_.qualifier == ByteString("node")).map(_.value.utf8String)

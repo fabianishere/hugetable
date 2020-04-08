@@ -1,9 +1,11 @@
 package nl.tudelft.htable.server.core
 
+import java.nio.ByteOrder
+
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
-import akka.util.ByteString
+import akka.util.{ByteString, ByteStringBuilder}
 import nl.tudelft.htable.client.impl.DefaultServiceResolverImpl
 import nl.tudelft.htable.client.{CachingServiceResolver, HTableClient, HTableInternalClient}
 import nl.tudelft.htable.core._
@@ -84,9 +86,9 @@ object HTableActor {
         // Spawn the gRPC services actor
         val grpcAdapter = context.messageAdapter(HTableActor.GRPCEvent)
         val grpc =
-          context.spawn(GRPCActor(self.address, clientService, adminService, internalService, grpcAdapter), name = "grpc-server")
+          context.spawn(GRPCActor(self.address, clientService, adminService, internalService, grpcAdapter),
+                        name = "grpc-server")
         context.watch(grpc)
-
 
         // Wait for the gRPC server to be ready
         Behaviors.receiveMessagePartial {
@@ -172,6 +174,9 @@ object HTableActor {
                     .put(RowCell(ByteString("start-key"), time, tablet.range.start))
                     .put(RowCell(ByteString("end-key"), time, tablet.range.end))
                     .put(RowCell(ByteString("state"), time, ByteString(state.id)))
+                    .put(RowCell(ByteString("id"),
+                                 time,
+                                 new ByteStringBuilder().putInt(tablet.id)(ByteOrder.LITTLE_ENDIAN).result()))
                   client.mutate(mutation)
               })((x, _) => x)
               .flatMap { _ =>
