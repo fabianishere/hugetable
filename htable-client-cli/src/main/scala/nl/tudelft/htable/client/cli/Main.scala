@@ -1,13 +1,17 @@
 package nl.tudelft.htable.client.cli
 
+import java.io.{ByteArrayInputStream, ObjectInputStream}
+import java.net.InetSocketAddress
+
 import akka.Done
 import akka.actor.ActorSystem
 import akka.stream.Materializer
 import akka.util.ByteString
 import nl.tudelft.htable.client.HTableClient
 import nl.tudelft.htable.core._
-import org.apache.curator.framework.CuratorFrameworkFactory
+import org.apache.curator.framework.{CuratorFramework, CuratorFrameworkFactory}
 import org.apache.curator.retry.ExponentialBackoffRetry
+import org.apache.curator.utils.ZKPaths
 import org.jline.reader.{EndOfFileException, LineReaderBuilder, UserInterruptException}
 import org.rogach.scallop.{ScallopConf, ScallopOption, Subcommand, Util}
 
@@ -15,6 +19,7 @@ import scala.collection.Seq
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContextExecutor, Future}
 import scala.util.{Failure, Success}
+import scala.jdk.CollectionConverters._
 
 /**
  * Main class of the HugeTable server program.
@@ -73,7 +78,7 @@ object Main {
             try {
               val commands = new Commands(value.split(" "))
               commands.verify()
-              val res = Await.result(processCommand(sys, client, commands), 100.seconds)
+              val res = Await.result(processCommand(sys, zookeeper, client, commands), 100.seconds)
               println(res)
             } catch {
               case e: Exception => e.printStackTrace()
@@ -82,7 +87,7 @@ object Main {
         }
       }
     } else {
-      processCommand(sys, client, conf)
+      processCommand(sys, zookeeper, client, conf)
         .onComplete {
           case Failure(exception) =>
             exception.printStackTrace()
@@ -97,7 +102,7 @@ object Main {
   /**
    * Process the command in the specified [Conf] object.
    */
-  private def processCommand(actorSystem: ActorSystem, client: HTableClient, conf: Commands): Future[Done] = {
+  private def processCommand(actorSystem: ActorSystem, zookeeper: CuratorFramework, client: HTableClient, conf: Commands): Future[Done] = {
     implicit val sys: ActorSystem = actorSystem
     implicit val mat: Materializer = Materializer(sys)
     implicit val ec: ExecutionContextExecutor = sys.dispatcher
@@ -142,10 +147,26 @@ object Main {
           .split(Tablet(conf.split.table(), RowRange.leftBounded(conf.split.startKey())), conf.split.splitKey())
       case Some(conf.invalidate) =>
         client.invalidate(List())
+      case Some(conf.listServers) =>
+        zookeeper.getChildren.forPath("/servers").asScala.foreach { node =>
+          val address = deserializeAddress(zookeeper.getData.forPath(ZKPaths.makePath("/servers", node)))
+          println(s"${node}\t${address}")
+        }
+        Future.successful(Done)
       case _ =>
         conf.printHelp()
         Future.successful(Done)
     }
+  }
+
+  /**
+   * Convert the specified byte string into a socket address.
+   */
+  def deserializeAddress(bytes: Array[Byte]): InetSocketAddress = {
+    val ois = new ObjectInputStream(new ByteArrayInputStream(bytes))
+    val value = ois.readObject
+    ois.close()
+    value.asInstanceOf[InetSocketAddress]
   }
 
   /**
@@ -292,12 +313,12 @@ object Main {
       /**
        * The start key of the tablet to split
        */
-      val startKey = opt[String](default = Some("")).map(s => ByteString(s))
+      val startKey = opt[String](descr = "The key of the tablet", default = Some("")).map(s => ByteString(s))
 
       /**
        * The split point.
        */
-      val splitKey = opt[String](default = Some("")).map(s => ByteString(s))
+      val splitKey = opt[String](descr = "The key at which to split the table", default = Some("")).map(s => ByteString(s))
     }
     addSubcommand(split)
 
@@ -306,6 +327,12 @@ object Main {
      */
     val invalidate = new Subcommand("invalidate")
     addSubcommand(invalidate)
+
+    /**
+     * A command to list the active servers.
+     */
+    val listServers = new Subcommand("list-servers")
+    addSubcommand(listServers)
 
     errorMessageHandler = { message =>
       println(Util.format("Error: %s", message))

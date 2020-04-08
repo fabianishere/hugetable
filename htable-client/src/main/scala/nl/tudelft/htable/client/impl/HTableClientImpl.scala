@@ -91,8 +91,13 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
               read(node, query)
                 .via(new RequireOne(() =>
                   new IllegalArgumentException(s"Unknown key '${key.utf8String}' in table ${table}")))
-            case Scan(table, _, reversed) =>
-              read(node, Scan(table, tablet.range, reversed))
+            case Scan(table, range, reversed) =>
+              val reducedStart = Order.keyOrdering.max(range.start, tablet.range.start)
+              val reducedEnd = if (range.isRightBounded && tablet.range.isRightBounded)
+                Order.keyOrdering.min(range.end, tablet.range.end)
+              else
+                Order.keyOrdering.max(range.end, tablet.range.end)
+              read(node, Scan(table, RowRange(reducedStart, reducedEnd), reversed))
           }
       }
   }
@@ -171,16 +176,16 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
       .flatMapConcat {
         case (metaNode, metaTablet) =>
           val metaClient = resolver.openClient(metaNode)
-          var tabletKey = ByteString(tablet.table) ++ tablet.range.end ++ ByteString(9, 9)
+          var prefixRange = RowRange.prefix(ByteString(tablet.table))
           if (metaTablet.range.isRightBounded) {
-            tabletKey = Order.keyOrdering.min(tabletKey, metaTablet.range.end)
+            prefixRange = RowRange(prefixRange.start,
+              Order.keyOrdering.min(prefixRange.end, metaTablet.range.end))
           }
-          read(Scan("METADATA", RowRange.rightBounded(tabletKey), reversed = true), metaClient)
-            .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
+          read(Scan("METADATA", prefixRange), metaClient)
+            .dropWhile(row => row.cells.find(_.qualifier == ByteString("end-key"))
+              .exists(cell => Order.keyOrdering.lteq(cell.value, tablet.range.start)))
             .takeWhile(row =>
               row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains(tablet.table))
-            .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
-            .mapConcat[Row](identity)
             .mapConcat[(Node, Tablet)] { row =>
               val res = parseMeta(row)
               res.map(Seq(_)).getOrElse(Seq())
@@ -213,9 +218,30 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   }
 
   private def resolveMaster(): Node = {
-    val leader = zookeeper.getChildren.forPath("/leader").asScala.min
+    val leader = zookeeper.getChildren.forPath("/leader").asScala.min(lockOrdering)
     val uid = new String(zookeeper.getData.forPath(s"/leader/$leader"), StandardCharsets.UTF_8)
     val address = CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid"))
     Node(uid, address)
+  }
+
+  /**
+   * Ordering for ZooKeeper locks.
+   */
+  private val lockOrdering: Ordering[String] = new Ordering[String] {
+    private val lockName = "latch-"
+
+    private def fix(str: String): String = {
+      var index = str.lastIndexOf(lockName)
+      if (index >= 0) {
+        index += lockName.length
+        return if (index <= str.length) str.substring(index)
+        else ""
+      }
+      str
+    }
+
+    override def compare(x: String, y: String): Int = {
+      fix(x).compareTo(fix(y))
+    }
   }
 }

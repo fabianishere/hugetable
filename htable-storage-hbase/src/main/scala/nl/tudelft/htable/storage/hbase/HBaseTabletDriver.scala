@@ -8,7 +8,7 @@ import akka.util.ByteString
 import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
-import org.apache.hadoop.hbase.client.{Get, Put, RegionInfoBuilder, Scan}
+import org.apache.hadoop.hbase.client.{Delete, Get, Put, RegionInfoBuilder, Scan}
 import org.apache.hadoop.hbase.regionserver.{HRegion, Region, RegionScanner}
 import org.apache.hadoop.hbase.{Cell, CellBuilderFactory, CellBuilderType, CellUtil}
 
@@ -19,31 +19,50 @@ import scala.jdk.CollectionConverters._
  */
 class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet) extends TabletDriver {
 
-  var mutations = 0
-
   /**
    * Perform the specified mutation in the tablet.
    */
   override def mutate(mutation: RowMutation): Unit = {
+    var shouldPut = false
     val put = new Put(mutation.key.toArray)
 
-    for (cellMutation <- mutation.mutations) {
-      put.add(cellMutation match {
-        case Mutation.PutCell(cell)    => toHBase(mutation.key, cell, Cell.Type.Put)
-        case Mutation.DeleteCell(cell) => toHBase(mutation.key, cell, Cell.Type.DeleteColumn)
-        case Mutation.Delete =>
-          val res = CellBuilderFactory.create(CellBuilderType.SHALLOW_COPY)
-          res.setFamily("hregion".getBytes("UTF-8"))
-          res.setType(Cell.Type.Delete)
-          res.setRow(mutation.key.toArray)
-          res.build()
-      })
+    var shouldDeleteColumn = false
+    val deleteColumn = new Delete(mutation.key.toArray)
+
+    var shouldDelete = false
+    val delete = new Delete(mutation.key.toArray)
+
+    mutation.mutations.foreach {
+      case Mutation.PutCell(cell) =>
+        shouldPut = true
+        put.add(toHBase(mutation.key, cell, Cell.Type.Put))
+      case Mutation.DeleteCell(cell) =>
+        shouldDeleteColumn = true
+        deleteColumn.addColumn("hregion".getBytes("UTF-8"), cell.qualifier.toArray)
+      case Mutation.Delete =>
+        shouldDelete = true
     }
 
-    region.startRegionOperation(Region.Operation.PUT)
-    region.put(put)
+    if (shouldPut) {
+      region.startRegionOperation(Region.Operation.PUT)
+      region.put(put)
+      region.closeRegionOperation(Region.Operation.PUT)
+    }
+
+    if (shouldDeleteColumn) {
+      region.startRegionOperation(Region.Operation.DELETE)
+      region.delete(deleteColumn)
+      region.closeRegionOperation(Region.Operation.DELETE)
+    }
+
+    if (shouldDelete) {
+      region.startRegionOperation(Region.Operation.DELETE)
+      region.delete(delete)
+      region.closeRegionOperation(Region.Operation.DELETE)
+    }
+
     region.flush(false)
-    region.closeRegionOperation(Region.Operation.PUT)
+
   }
 
   /**
@@ -126,11 +145,9 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
       .setRegionId(region.getRegionInfo.getRegionId + 1)
       .build
 
-    region.startRegionOperation(Region.Operation.SPLIT_REGION)
     val regionFs = region.getRegionFileSystem
     regionFs.createSplitsDir(leftDaughter, rightDaughter)
     SplitUtils.splitStores(region, leftDaughter, rightDaughter)
-    region.closeRegionOperation(Region.Operation.SPLIT_REGION)
 
     (leftTablet, rightTablet)
   }

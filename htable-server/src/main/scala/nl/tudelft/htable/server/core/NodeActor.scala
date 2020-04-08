@@ -80,8 +80,9 @@ object NodeActor {
        * Find the tablet closest to the given key.
        */
       def find(table: String, key: ByteString): Option[(Tablet, TabletDriver)] = {
+        val nextKey = key ++ ByteString(0) // Ensure that our key is strictly greater
         tablets
-          .rangeTo(Tablet(table, RowRange.leftBounded(key)))
+          .rangeTo(Tablet(table, RowRange.leftBounded(nextKey)))
           .dropWhile(_._1.table != table)
           .lastOption
       }
@@ -94,11 +95,18 @@ object NodeActor {
           promise.success(tablets.keys.toSeq)
           Behaviors.same
         case Assign(newTablets, promise) =>
-          tablets.foreach { case (_, driver) => driver.close() }
-          tablets.clear()
+          val newTabletsSet = newTablets.toSet
+          val removeTablets = tablets.keySet.diff(newTabletsSet)
+          val addTablets = newTabletsSet.diff(tablets.keySet)
+
+          // Remove tablets
+          for (tablet <- removeTablets) {
+            val driver = tablets.remove(tablet)
+            driver.foreach(_.close())
+          }
 
           // Spawn new tablet managers
-          for (tablet <- newTablets) {
+          for (tablet <- addTablets) {
             tablets.put(tablet, storageDriver.createTablet(tablet))
           }
 
@@ -113,14 +121,15 @@ object NodeActor {
                 case None              => promise.failure(NotServingTabletException(s"The key $key is not served"))
               }
             case Scan(table, range, reversed) =>
-              find(table, range.start).map(_._1) match {
-                case Some(start) =>
-                  val end = Tablet(table, RowRange.leftBounded(range.end))
-                  val submap =
-                    if (range.isUnbounded) tablets.rangeFrom(start).rangeTo(end) else tablets.range(start, end)
-                  val source: Source[Row, NotUsed] =
-                    Source(if (reversed) submap.toSeq.reverse else submap.toSeq)
-                      .flatMapConcat { case (_, driver) => driver.read(query) }
+              find(table, range.start) match {
+                case Some((_, driver)) =>
+                  // val end = Tablet(table, RowRange.leftBounded(range.end))
+                  // val submap =
+                  //   if (range.isUnbounded) tablets.rangeFrom(start).rangeTo(end) else tablets.range(start, end)
+                  // val source: Source[Row, NotUsed] =
+                  //  Source(if (reversed) submap.toSeq.reverse else submap.toSeq)
+                  //   .flatMapConcat { case (_, driver) => driver.read(query) }
+                  val source = driver.read(query)
                   promise.success(source)
                 case None =>
                   promise.failure(new IllegalArgumentException("Start key not in range"))

@@ -33,6 +33,11 @@ object HTableActor {
   private final case class AdminEvent(event: AdminActor.Event) extends Command
 
   /**
+   * Internal message wrapper for gRPC event.
+   */
+  private final case class GRPCEvent(event: GRPCActor.Event) extends Command
+
+  /**
    * Internal message wrapper for ZooKeeper event.
    */
   private final case class ZooKeeperEvent(event: ZooKeeperActor.Event) extends Command
@@ -77,20 +82,26 @@ object HTableActor {
         )
 
         // Spawn the gRPC services actor
+        val grpcAdapter = context.messageAdapter(HTableActor.GRPCEvent)
         val grpc =
-          context.spawn(GRPCActor(self.address, clientService, adminService, internalService), name = "grpc-server")
+          context.spawn(GRPCActor(self.address, clientService, adminService, internalService, grpcAdapter), name = "grpc-server")
         context.watch(grpc)
 
-        // Spawn the ZooKeeper actor
-        val zkAdapter = context.messageAdapter(HTableActor.ZooKeeperEvent)
-        val zkRef = context.spawn(ZooKeeperActor(self, zk, zkAdapter), name = "zookeeper")
-        context.watch(zkRef)
 
-        // Spawn the load balancer
-        val loadBalancer = context.spawn(LoadBalancerActor(zkRef, client), name = "load-balancer")
-        context.watch(loadBalancer)
+        // Wait for the gRPC server to be ready
+        Behaviors.receiveMessagePartial {
+          case GRPCEvent(GRPCActor.ServiceActive) =>
+            // Spawn the ZooKeeper actor
+            val zkAdapter = context.messageAdapter(HTableActor.ZooKeeperEvent)
+            val zkRef = context.spawn(ZooKeeperActor(self, zk, zkAdapter), name = "zookeeper")
+            context.watch(zkRef)
 
-        started(self, client, admin, loadBalancer)
+            // Spawn the load balancer
+            val loadBalancer = context.spawn(LoadBalancerActor(zkRef, client), name = "load-balancer")
+            context.watch(loadBalancer)
+
+            started(self, client, admin, loadBalancer)
+        }
       }
 
   /**
@@ -151,11 +162,11 @@ object HTableActor {
             loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
             Behaviors.same
           case NodeEvent(NodeActor.Invalidated(tablets)) =>
-            context.log.info("Invalidating tablets")
-            val time = System.currentTimeMillis()
+            context.log.info(s"Invalidating tablets: ${tablets}")
             Future
               .reduceLeft(tablets.map {
                 case (tablet, state) =>
+                  val time = System.currentTimeMillis
                   val mutation = RowMutation("METADATA", ByteString(tablet.table) ++ tablet.range.start)
                     .put(RowCell(ByteString("table"), time, ByteString(tablet.table)))
                     .put(RowCell(ByteString("start-key"), time, tablet.range.start))

@@ -64,6 +64,6 @@ object HBaseStorageDriver {
   private[hbase] val columnFamily =
     ColumnFamilyDescriptorBuilder
       .newBuilder("hregion".getBytes("UTF-8"))
-      .setMaxVersions(10) // TODO Add option for specifying this
+      .setMaxVersions(5) // TODO Add option for specifying this
       .build()
 }

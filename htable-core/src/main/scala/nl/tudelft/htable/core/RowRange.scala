@@ -42,4 +42,31 @@ object RowRange {
    * Obtain a [RowRange] that is right bounded (exclusive).
    */
   def rightBounded(end: ByteString): RowRange = RowRange(ByteString.empty, end)
+
+  /**
+   * Obtain a [RowRange] of a prefix.
+   */
+  def prefix(prefix: ByteString): RowRange = {
+    // Essentially we are treating it like an 'unsigned very very long' and doing +1 manually.
+    // Search for the place where the trailing 0xFFs start
+    var offset = prefix.length
+    while (offset > 0 && prefix(offset - 1) != 0xFF) {
+      offset -= 1
+    }
+
+    if (offset == 0) {
+      // We got an 0xFFFF... (only FFs) stopRow value which is
+      // the last possible prefix before the end of the table.
+      // So set it to stop at the 'end of the table'
+      return RowRange(prefix, ByteString.empty)
+    }
+
+    // Copy the right length of the original
+    val newStopRow: Array[Byte] = prefix
+      .slice(0, offset)
+      .updated(offset - 1, (prefix(offset - 1) + 1).toByte)
+      .toArray
+
+    RowRange(prefix, ByteString.fromArrayUnsafe(newStopRow))
+  }
 }

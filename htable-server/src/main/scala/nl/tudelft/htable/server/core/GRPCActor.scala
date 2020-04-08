@@ -38,17 +38,29 @@ object GRPCActor {
   private final case class Down(throwable: Throwable) extends Command
 
   /**
+   * Events emitted by this actor.
+   */
+  sealed trait Event
+
+  /**
+   * The service has become active.
+   */
+  final case object ServiceActive extends Event
+
+  /**
    * Construct the behavior of the gRPC actor.
    *
    * @param address The address to listen at.
    * @param clientService The client service implementation to use.
    * @param adminService The admin service implementation to use.
    * @param internalService The internal service implementation to use.
+   * @param listener The listener to emit events to.
    */
   def apply(address: InetSocketAddress,
             clientService: ClientService,
             adminService: AdminService,
-            internalService: InternalService): Behavior[Command] = Behaviors.setup { context =>
+            internalService: InternalService,
+            listener: ActorRef[Event]): Behavior[Command] = Behaviors.setup { context =>
     context.log.info("Starting gRPC services")
     context.pipeToSelf(createServices(address, context, clientService, adminService, internalService)) {
       case Success(value) => Up(value)
@@ -58,6 +70,7 @@ object GRPCActor {
     Behaviors.receiveMessagePartial {
       case Up(binding) =>
         context.log.info(s"Listening to ${binding.localAddress}")
+        listener ! ServiceActive
         Behaviors.receiveSignal {
           case (_, PostStop) =>
             binding.terminate(10.seconds)

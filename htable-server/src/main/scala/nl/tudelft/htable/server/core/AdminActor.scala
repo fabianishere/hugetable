@@ -100,8 +100,11 @@ object AdminActor {
           .put(RowCell(ByteString("start-key"), time, ByteString.empty))
           .put(RowCell(ByteString("end-key"), time, ByteString.empty))
           .put(RowCell(ByteString("state"), time, ByteString(TabletState.Unassigned.id)))
-        client.mutate(mutation).onComplete(promise.complete)
-        listener ! Invalidated(Seq.empty)
+        client.mutate(mutation)
+          .onComplete { res =>
+            listener ! Invalidated(Seq.empty)
+            promise.complete(res)
+          }
         Behaviors.same
       case DeleteTable(table, promise) =>
         context.log.info(s"Deleting table $table")
@@ -112,10 +115,11 @@ object AdminActor {
           client
             .read(Scan("METADATA", RowRange.leftBounded(ByteString(table))))
             .takeWhile { row =>
-              row.cells
+              val res = row.cells
                 .find(_.qualifier == ByteString("table"))
                 .map(_.value.utf8String)
-                .contains(table)
+                .exists(_.equalsIgnoreCase(table))
+              res
             }
             .flatMapConcat { row =>
               val mutation = RowMutation("METADATA", row.key)

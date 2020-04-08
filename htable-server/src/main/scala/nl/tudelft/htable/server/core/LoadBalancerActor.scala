@@ -217,11 +217,11 @@ object LoadBalancerActor {
           tablet = Tablet(table.value.utf8String, RowRange(start.value, end.value))
           state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
           if state != TabletState.Closed // Do not assign closed tablets
-          uid = row.cells.find(_.qualifier == ByteString("node"))
+          uid = row.cells.find(_.qualifier == ByteString("node")).map(_.value.utf8String)
         } yield {
           uid.filter(_ => state == TabletState.Served).foreach { cell =>
             // Assign the tablet to the specified node
-            uidToNode.get(cell.value.utf8String).foreach { node =>
+            uidToNode.get(cell).foreach { node =>
               tablets
                 .updateWith(node) { tablets =>
                   Some(tablets.map(_.appended(tablet)).getOrElse(Seq.empty))
