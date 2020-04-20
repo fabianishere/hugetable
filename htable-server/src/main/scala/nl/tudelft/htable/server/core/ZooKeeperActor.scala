@@ -104,7 +104,7 @@ object ZooKeeperActor {
     Behaviors.setup { context =>
       context.log.info("Joining leader election")
 
-      // Create group membership
+      // Create group membership based on Curator Recipes
       val membership =
         new GroupMember(zookeeper, "/servers", self.uid, CoreAdapters.serializeAddress(self.address))
       membership.addListener(new GroupMemberListener {
@@ -113,7 +113,7 @@ object ZooKeeperActor {
       })
       membership.start()
 
-      // Perform leader election via ZooKeeper
+      // Perform leader election via Curator Recipes
       val leaderLatch = new LeaderLatch(zookeeper, "/leader", self.uid)
       leaderLatch.addListener(
         new LeaderLatchListener {
@@ -130,7 +130,7 @@ object ZooKeeperActor {
       Behaviors
         .receiveMessage[Command] {
           case SetRoot(node) =>
-            context.log.info(s"Root tablet located at $node")
+            context.log.debug(s"Root tablet located at $node")
             rootClaim match {
               case Some(value) =>
                 value.setData(node.uid.getBytes("UTF-8"))

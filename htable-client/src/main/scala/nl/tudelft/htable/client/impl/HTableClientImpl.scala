@@ -149,25 +149,31 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
     val rootAddress = resolveRoot()
     val rootClient = resolver.openClient(rootAddress)
 
-    // Append a character to range since it is exclusive on the right end
+    // We append a null-byte to the end of the range to make it inclusive
     val metaKey =
       if (tablet.table.equalsIgnoreCase("METADATA"))
-        ByteString("METADATA") ++ tablet.range.end ++ ByteString(9)
+        ByteString("METADATA") ++ tablet.range.end ++ ByteString(0)
       else
-        ByteString("METADATA" ++ tablet.table) ++ tablet.range.end ++ ByteString(9)
+        ByteString("METADATA" ++ tablet.table) ++ tablet.range.end ++ ByteString(0)
 
+    // Our resolve procedure works as follows:
+    // 1. Scan the metadata table from the end-key until the first matching start row occurs
+    // 2. Verify whether this row is still part of the table we are looking for
+    // 3. Reverse the rows
+    // 5. Convert the METADATA rows into a stream of nodes and tablets
     val meta: Source[(Node, Tablet), NotUsed] =
       read(Scan("METADATA", RowRange.rightBounded(metaKey), reversed = true), rootClient)
         .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
         .takeWhile(row =>
           row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains("METADATA"))
-        .fold(List.empty[Row])((acc: List[Row], curr: Row) => (curr :: acc))
+        .fold(List.empty[Row])((acc: List[Row], curr: Row) => curr :: acc) // Reverse
         .mapConcat[Row](identity)
         .mapConcat[(Node, Tablet)] { row =>
           val res = parseMeta(row)
           res.map(Seq(_)).getOrElse(Seq())
         }
 
+    // In case we are looking for rows in the METADATA table, we have already found our target tablets.
     if (tablet.table.equalsIgnoreCase("METADATA")) {
       return meta
     }
@@ -188,7 +194,7 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
                   .find(_.qualifier == ByteString("end-key"))
                   .exists(cell =>
                     if (cell.value.isEmpty) false else Order.keyOrdering.lteq(cell.value, tablet.range.start)))
-            .takeWhile(row =>
+            .takeWhile(row => // Take rows until we find one of a different table
               row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains(tablet.table))
             .mapConcat[(Node, Tablet)] { row =>
               val res = parseMeta(row)

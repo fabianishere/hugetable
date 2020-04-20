@@ -18,14 +18,10 @@ private[hbase] object SplitUtils {
   def splitStores(region: HRegion, left: RegionInfo, right: RegionInfo): Unit = {
     val regionFs = region.getRegionFileSystem
     val htd = region.getTableDescriptor
-    // Filter. There is a lag cleaning up compacted reference files. They get cleared
-    // after a delay in case outstanding Scanners still have references. Because of this,
-    // the listing of the Store content may have straggler reference files. Skip these.
-    // It should be safe to skip references at this point because we checked above with
-    // the region if it thinks it is splittable and if we are here, it thinks it is
-    // splitable.
     val files = regionFs.getStoreFiles("hregion").asScala
     val hcd = htd.getColumnFamily("hregion".getBytes("UTF-8"))
+
+    // Traverse all store files and split them
     for (storeFileInfo <- files if !storeFileInfo.isReference) {
       splitStore(
         regionFs,

@@ -114,7 +114,7 @@ object NodeActor {
             promise.success(Done)
             Behaviors.same
           case Read(query, promise) =>
-            context.log.info(s"READ $query")
+            context.log.debug(s"READ $query")
             query match {
               case Get(table, key) =>
                 find(table, key) match {
@@ -123,14 +123,13 @@ object NodeActor {
                 }
               case Scan(table, range, reversed) =>
                 find(table, range.start) match {
-                  case Some((_, driver)) =>
-                    // val end = Tablet(table, RowRange.leftBounded(range.end))
-                    // val submap =
-                    //   if (range.isUnbounded) tablets.rangeFrom(start).rangeTo(end) else tablets.range(start, end)
-                    // val source: Source[Row, NotUsed] =
-                    //  Source(if (reversed) submap.toSeq.reverse else submap.toSeq)
-                    //   .flatMapConcat { case (_, driver) => driver.read(query) }
-                    val source = driver.read(query)
+                  case Some((start, driver)) =>
+                    val end = Tablet(table, RowRange.leftBounded(range.end))
+                    val submap =
+                      if (range.isUnbounded) tablets.rangeFrom(start).rangeTo(end) else tablets.range(start, end)
+                    val source: Source[Row, NotUsed] =
+                      Source(if (reversed) submap.toSeq.reverse else submap.toSeq)
+                        .flatMapConcat { case (_, driver) => driver.read(query) }
                     promise.success(source)
                   case None =>
                     promise.failure(new IllegalArgumentException("Start key not in range"))
@@ -138,7 +137,7 @@ object NodeActor {
             }
             Behaviors.same
           case Mutate(mutation, promise) =>
-            context.log.info(s"MUTATE $mutation")
+            context.log.debug(s"MUTATE $mutation")
 
             find(mutation.table, mutation.key) match {
               case Some((_, driver)) =>
@@ -148,7 +147,7 @@ object NodeActor {
             }
             Behaviors.same
           case Split(tablet, splitKey, promise) =>
-            context.log.info(s"Split tablet $tablet at $splitKey")
+            context.log.debug(s"Split tablet $tablet at $splitKey")
             find(tablet.table, tablet.range.start) match {
               case Some((tablet, driver)) =>
                 promise.complete(Try {

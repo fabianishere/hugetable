@@ -96,6 +96,10 @@ object AdminActor {
         enabled(listener, client)
       case CreateTable(table, promise) =>
         context.log.info(s"Creating new table $table")
+
+        // We create a table by adding an entry for the table to the METADATA table
+        // After we invalidate the current tablet distribution, it will automatically be detected by the load balancer
+        // and assigned to some node which will actually create the table on disk.
         val time = System.currentTimeMillis()
         val mutation = RowMutation("METADATA", ByteString(table))
           .put(RowCell(ByteString("table"), time, ByteString(table)))
@@ -114,6 +118,8 @@ object AdminActor {
       case DeleteTable(table, promise) =>
         context.log.info(s"Deleting table $table")
 
+        // We delete a table by scanning for all its entries in the METADATA table and removing them.
+        // Note that this does not yet remove the table from disk.
         if (table.equalsIgnoreCase("METADATA")) {
           promise.failure(new IllegalArgumentException("Refusing to remove METADATA"))
         } else {
@@ -127,8 +133,7 @@ object AdminActor {
               res
             }
             .flatMapConcat { row =>
-              val mutation = RowMutation("METADATA", row.key)
-                .delete()
+              val mutation = RowMutation("METADATA", row.key).delete()
               Source.future(client.mutate(mutation))
             }
             .runWith(Sink.onComplete(res => {

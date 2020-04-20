@@ -61,6 +61,8 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
       region.closeRegionOperation(Region.Operation.DELETE)
     }
 
+    // XXX We need to flush since we do not use a write-ahead log and terminating the process will cause our changes
+    // XXX to be lost.
     region.flush(false)
 
   }

@@ -105,7 +105,7 @@ object GRPCActor {
     val service: HttpRequest => Future[HttpResponse] =
       AkkaServiceHandler.concatOrNotFound(client, admin, internal)
 
-    // Bind service handler servers to localhost
+    // Bind service handler servers to the specified address
     Http().bindAndHandleAsync(
       service,
       interface = address.getHostString,

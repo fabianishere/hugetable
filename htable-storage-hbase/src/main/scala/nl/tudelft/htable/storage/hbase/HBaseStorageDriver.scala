@@ -6,7 +6,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hbase.client.{
   ColumnFamilyDescriptorBuilder,
-  Durability,
   RegionInfoBuilder,
   TableDescriptorBuilder
 }
@@ -25,6 +24,7 @@ class HBaseStorageDriver(val node: Node, val fs: FileSystem) extends StorageDriv
   private val conf = new Configuration(fs.getConf)
   private val rootDir = new Path("htable-regions")
   conf.set(HConstants.HBASE_DIR, rootDir.toString)
+  // Use DisabledWALProvider since we cannot get other providers to work currently
   conf.set("hbase.wal.provider", "org.apache.hadoop.hbase.wal.DisabledWALProvider")
   private val factory =
     new WALFactory(conf, s"${node.address.getHostName}_${node.address.getPort}_${System.currentTimeMillis}")
@@ -38,7 +38,6 @@ class HBaseStorageDriver(val node: Node, val fs: FileSystem) extends StorageDriv
       .valueOf(tablet.table)
     val tableDescriptor = TableDescriptorBuilder
       .newBuilder(tableName)
-      .setDurability(Durability.SYNC_WAL)
       .setColumnFamily(HBaseStorageDriver.columnFamily)
       .build
 
