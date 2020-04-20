@@ -52,3 +52,6 @@ htable-client-cli/build/install/htable-client-cli/bin/htable-client-cli -i --zoo
 ```
 Make sure again that you specify the correct ZooKeeper port. Then, enter `help` to obtain the possible commands you
 can execute in the cluster.
+
+## License
+HugeTable is available under the [MIT license](https://github.com/fabianishere/in4391/blob/master/LICENSE.txt).
