@@ -156,6 +156,9 @@ object Main {
           println(s"${node}\t${address}")
         }
         Future.successful(Done)
+      case Some(conf.help) =>
+        conf.printHelp()
+        Future.successful(Done)
       case _ =>
         conf.printHelp()
         Future.successful(Done)
@@ -337,6 +340,12 @@ object Main {
      */
     val listServers = new Subcommand("list-servers")
     addSubcommand(listServers)
+
+    /**
+     * A command to print a help message.
+     */
+    val help = new Subcommand("help")
+    addSubcommand(help)
 
     errorMessageHandler = { message =>
       println(Util.format("Error: %s", message))
