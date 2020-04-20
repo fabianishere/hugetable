@@ -1,4 +1,4 @@
-package nl.tudelft.htable.client.cli
+package nl.tudelft.htable.experiments
 
 import akka.actor.ActorSystem
 import akka.stream.Materializer
@@ -7,18 +7,15 @@ import nl.tudelft.htable.client.HTableClient
 import nl.tudelft.htable.core._
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
-import org.rogach.scallop.{ScallopConf, ScallopOption, Subcommand}
-import scala.concurrent.duration._
-import scala.concurrent.Await
+import org.rogach.scallop.{ScallopConf, ScallopOption}
 
 import scala.collection.Seq
 import scala.concurrent.ExecutionContextExecutor
-import scala.util.{Failure, Success}
 
 /**
  * Main class of the HugeTable server program.
  */
-object WriteTest {
+object ReadExperiment {
 
   /**
    * Main entry point of the program.
@@ -50,18 +47,25 @@ object WriteTest {
     val max = 100000000
     var start = System.currentTimeMillis()
     for (i <- 0 until max) {
-      val value = "a" * 1000 // We write 1000 byte values per request (same as big table paper)
-      val time = System.currentTimeMillis()
-      val mutation: RowMutation = RowMutation("Test", ByteString("TestRow"))
-      mutation.put(RowCell(ByteString("row_" + i), time, ByteString(value)))
-      val result = client.mutate(mutation)
-      Await.result(result, 100.seconds)
+      val scan: Scan = Scan("Test", RowRange(ByteString("TestRow"), ByteString("TestRow")))
+      val result = client.read(scan)
       if ((i % 1000) == 0) {
         val end = System.currentTimeMillis()
         val avg = 1000.0 / ((end - start) / 1000.0)
         start = System.currentTimeMillis()
         System.out.println("At " + i + " requests total avg p/s: " + avg)
+        result.runForeach(printRow)
       }
+    }
+  }
+
+  /**
+   * Print the contents of a row.
+   */
+  private def printRow(row: Row): Unit = {
+    row.cells.foreach { cell =>
+      System.out.println(
+        s"${row.key.utf8String}\t${cell.qualifier.utf8String}\t${cell.timestamp}\t${cell.value.utf8String}")
     }
   }
 
