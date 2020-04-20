@@ -5,13 +5,13 @@ import java.net.InetSocketAddress
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
+import akka.grpc.scaladsl.ServiceHandler
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.http.scaladsl.{Http, HttpConnectionContext}
 import akka.stream.Materializer
 import nl.tudelft.htable.protocol.admin.{AdminService, AdminServiceHandler}
 import nl.tudelft.htable.protocol.client.{ClientService, ClientServiceHandler}
 import nl.tudelft.htable.protocol.internal.{InternalService, InternalServiceHandler}
-import nl.tudelft.htable.server.core.util.AkkaServiceHandler
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -91,8 +91,7 @@ object GRPCActor {
                              adminService: AdminService,
                              internalService: InternalService): Future[Http.ServerBinding] = {
     // Akka boot up code
-    implicit val sys: ActorSystem[Nothing] = context.system
-    implicit val classicSys: akka.actor.ActorSystem = context.system.toClassic
+    implicit val sys: akka.actor.ActorSystem = context.system.toClassic
     implicit val mat: Materializer = Materializer(context.system)
     implicit val ec: ExecutionContext =
       context.system.dispatchers.lookup(DispatcherSelector.default())
@@ -103,10 +102,10 @@ object GRPCActor {
 
     // Create service handlers
     val service: HttpRequest => Future[HttpResponse] =
-      AkkaServiceHandler.concatOrNotFound(client, admin, internal)
+      ServiceHandler.concatOrNotFound(client, admin, internal)
 
     // Bind service handler servers to the specified address
-    Http().bindAndHandleAsync(
+    Http()(sys).bindAndHandleAsync(
       service,
       interface = address.getHostString,
       port = address.getPort,

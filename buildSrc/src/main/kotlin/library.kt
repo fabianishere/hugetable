@@ -26,7 +26,7 @@ object Library {
     /**
      * Akka gRPC version.
      */
-    val AKKA_GRPC = "0.8.1"
+    val AKKA_GRPC = "0.8.4"
 
     /**
      * The library for testing the projects.
