@@ -4,11 +4,7 @@ import nl.tudelft.htable.core.{Node, Tablet}
 import nl.tudelft.htable.storage.{StorageDriver, TabletDriver}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.hadoop.hbase.client.{
-  ColumnFamilyDescriptorBuilder,
-  RegionInfoBuilder,
-  TableDescriptorBuilder
-}
+import org.apache.hadoop.hbase.client.{ColumnFamilyDescriptorBuilder, RegionInfoBuilder, TableDescriptorBuilder}
 import org.apache.hadoop.hbase.regionserver.{HRegion, MemStoreLAB}
 import org.apache.hadoop.hbase.wal.WALFactory
 import org.apache.hadoop.hbase.{HConstants, TableName}

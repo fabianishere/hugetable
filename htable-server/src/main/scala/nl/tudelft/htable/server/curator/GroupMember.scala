@@ -1,4 +1,4 @@
-package nl.tudelft.htable.server.core.curator
+package nl.tudelft.htable.server.curator
 
 import java.io.Closeable
 

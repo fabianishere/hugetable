@@ -1,10 +1,10 @@
-package nl.tudelft.htable.server.core
+package nl.tudelft.htable.server
 
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector, PostStop}
 import nl.tudelft.htable.core.Node
 import nl.tudelft.htable.protocol.CoreAdapters
-import nl.tudelft.htable.server.core.curator.{GroupMember, GroupMemberListener}
+import nl.tudelft.htable.server.curator.{GroupMember, GroupMemberListener}
 import org.apache.curator.framework.CuratorFramework
 import org.apache.curator.framework.recipes.cache.ChildData
 import org.apache.curator.framework.recipes.leader.{LeaderLatch, LeaderLatchListener}

@@ -1,11 +1,11 @@
-package nl.tudelft.htable.server.core.services
+package nl.tudelft.htable.server.services
 
 import akka.Done
 import akka.actor.typed.{ActorRef, ActorSystem, DispatcherSelector}
 import akka.util.Timeout
 import nl.tudelft.htable.core.Tablet
 import nl.tudelft.htable.protocol.internal._
-import nl.tudelft.htable.server.core.NodeActor
+import nl.tudelft.htable.server.NodeActor
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise}

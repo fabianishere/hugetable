@@ -1,4 +1,4 @@
-package nl.tudelft.htable.server.core
+package nl.tudelft.htable.server
 
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior, PostStop}

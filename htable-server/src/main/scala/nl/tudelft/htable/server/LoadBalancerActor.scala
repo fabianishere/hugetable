@@ -1,4 +1,4 @@
-package nl.tudelft.htable.server.core
+package nl.tudelft.htable.server
 
 import java.nio.ByteOrder
 
@@ -8,12 +8,13 @@ import akka.stream.Materializer
 import akka.stream.typed.scaladsl.ActorSink
 import akka.util.{ByteString, ByteStringBuilder, Timeout}
 import nl.tudelft.htable.client.HTableInternalClient
+import nl.tudelft.htable.client.impl.MetaHelpers
 import nl.tudelft.htable.core._
 
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
-import scala.util.{Failure, Random, Success}
+import scala.util.{Failure, Success}
 
 /**
  * A load balancer rebalances the unassigned tablets to the active tablet servers.
@@ -49,11 +50,13 @@ object LoadBalancerActor {
    *
    * @param zk The reference to the ZooKeeper actor.
    * @param client The client to communicate with the other nodes.
+   * @param policy The load balancing policy.
    */
-  def apply(zk: ActorRef[ZooKeeperActor.Command], client: HTableInternalClient): Behavior[Command] = Behaviors.setup {
-    context =>
-      context.log.info("Starting load balancer")
-      idle(zk, client)
+  def apply(zk: ActorRef[ZooKeeperActor.Command],
+            client: HTableInternalClient,
+            policy: LoadBalancerPolicy): Behavior[Command] = Behaviors.setup { context =>
+    context.log.info("Starting load balancer")
+    idle(zk, client, policy)
   }
 
   /**
@@ -61,10 +64,13 @@ object LoadBalancerActor {
    *
    * @param zk The reference to the ZooKeeper actor.
    * @param client The client to communicate with the other nodes.
+   * @param policy The load balancing policy.
    */
-  private def idle(zk: ActorRef[ZooKeeperActor.Command], client: HTableInternalClient): Behavior[Command] =
+  private def idle(zk: ActorRef[ZooKeeperActor.Command],
+                   client: HTableInternalClient,
+                   policy: LoadBalancerPolicy): Behavior[Command] =
     Behaviors.receiveMessagePartial {
-      case Schedule(nodes) => running(zk, client, nodes)
+      case Schedule(nodes) => running(zk, client, policy, nodes)
     }
 
   /**
@@ -72,10 +78,12 @@ object LoadBalancerActor {
    *
    * @param zk The reference to the ZooKeeper actor.
    * @param client The client to communicate with the other nodes.
+   * @param policy The load balancing policy.
    * @param nodes The nodes to load reconstruct over.
    */
   private def running(zk: ActorRef[ZooKeeperActor.Command],
                       client: HTableInternalClient,
+                      policy: LoadBalancerPolicy,
                       nodes: Set[Node]): Behavior[Command] = Behaviors.setup { context =>
     // asking someone requires a timeout if the timeout hits without response
     // the ask is failed with a TimeoutException
@@ -99,16 +107,16 @@ object LoadBalancerActor {
         responses(node) = tablets
 
         if (responses.size == nodes.size)
-          reconstruct(zk, client, responses)
+          reconstruct(zk, client, policy, responses)
         else
           Behaviors.same
       case NodeFailure(node, _) =>
         responses(node) = Seq.empty
         if (responses.size == nodes.size)
-          reconstruct(zk, client, responses)
+          reconstruct(zk, client, policy, responses)
         else
           Behaviors.same
-      case Schedule(nodes) => running(zk, client, nodes)
+      case Schedule(nodes) => running(zk, client, policy, nodes)
     }
   }
 
@@ -117,6 +125,7 @@ object LoadBalancerActor {
    */
   private def reconstruct(zk: ActorRef[ZooKeeperActor.Command],
                           client: HTableInternalClient,
+                          policy: LoadBalancerPolicy,
                           tablets: mutable.HashMap[Node, Seq[Tablet]]): Behavior[Command] = Behaviors.setup { context =>
     implicit val timeout: Timeout = 3.seconds
     implicit val mat: Materializer = Materializer(context.system)
@@ -124,16 +133,17 @@ object LoadBalancerActor {
     context.log.debug("Gathering all known tablets")
 
     val queuedTablets = mutable.TreeSet[Tablet](Tablet.root) // The tablets to be possibly (re-)assigned
-    val assignedTablets = mutable.TreeMap[Tablet, Node]()
+    val queriedNodes = mutable.HashSet[Node]() // Nodes that have been queried
+    val newAssignment = mutable.TreeMap[Tablet, Node]()
 
-    tablets
-      .flatMap { case (k, v) => v.map(t => (k, t)) }
-      .foreach { case (node, tablet) => assignedTablets(tablet) = node }
+    // Map all nodes to their unique identifiers
+    val uidToNode = tablets.keys.map(node => (node.uid, node)).toMap
 
-    val queriedNodes = mutable.HashSet[Node]()
-    val uidToNode = mutable.HashMap[String, Node]()
+    // Process initial queue
+    processQueue(queuedTablets)
 
-    tablets.keys.foreach(node => uidToNode(node.uid) = node)
+    // Start load balancing cycle
+    policy.startCycle(tablets.keySet)
 
     /**
      * Query the specified [Node] for the metadata table.
@@ -149,18 +159,16 @@ object LoadBalancerActor {
         .runWith(sink)
     }
 
-    val nodeIterator: Iterator[Node] = Iterator.continually(Random.shuffle(tablets.keys)).flatten
-
     /**
      * Process the specified queue by querying the relevant nodes for the meta tablet or assigning the tablets and
      * then performing a query.
      */
     def processQueue(queue: mutable.TreeSet[Tablet]): Unit = {
       for (tablet <- queue) {
-        val node = assignedTablets.get(tablet) match {
+        val node = newAssignment.get(tablet) match {
           case Some(value) => value
           case None =>
-            val node = nodeIterator.next() // Perform round robin assignment
+            val node = policy.select(tablet)
 
             // Note that this operation must always return some Seq value
             val assignments = tablets
@@ -177,21 +185,13 @@ object LoadBalancerActor {
 
             // Update metadata tablet to reflect the assignment
             val key = ByteString(tablet.table) ++ tablet.range.start
+            val mutation = MetaHelpers.writeRow(tablet, TabletState.Served, Some(node))
+
             val metaNode =
               if (Tablet.isRoot(tablet))
                 node
               else
-                assignedTablets.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
-            val time = System.currentTimeMillis()
-            val mutation = RowMutation("METADATA", key)
-              .put(RowCell(ByteString("table"), time, ByteString(tablet.table)))
-              .put(RowCell(ByteString("start-key"), time, tablet.range.start))
-              .put(RowCell(ByteString("end-key"), time, tablet.range.end))
-              .put(RowCell(ByteString("node"), time, ByteString(node.uid)))
-              .put(RowCell(ByteString("state"), time, ByteString(TabletState.Served.id)))
-              .put(RowCell(ByteString("id"),
-                           time,
-                           new ByteStringBuilder().putInt(tablet.id)(ByteOrder.LITTLE_ENDIAN).result()))
+                newAssignment.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
 
             context.log.debug(s"Asking $metaNode to update METADATA tablet")
             client.mutate(metaNode, mutation)
@@ -203,7 +203,7 @@ object LoadBalancerActor {
         }
 
         queue -= tablet
-        assignedTablets(tablet) = node
+        newAssignment(tablet) = node
 
         if (Tablet.isMeta(tablet) && !queriedNodes.contains(node)) {
           query(node)
@@ -211,51 +211,39 @@ object LoadBalancerActor {
       }
     }
 
-    // Process initial queue
-    processQueue(queuedTablets)
-
     Behaviors.receiveMessagePartial {
-      case Schedule(nodes) => running(zk, client, nodes)
+      case Schedule(nodes) => running(zk, client, policy, nodes)
       case NodeRow(_, row) =>
         context.log.debug(s"Received row $row")
-        // Parse a row into a tablet
-        for {
-          table <- row.cells.find(_.qualifier == ByteString("table"))
-          start <- row.cells.find(_.qualifier == ByteString("start-key"))
-          end <- row.cells.find(_.qualifier == ByteString("end-key"))
-          id = row.cells
-            .find(_.qualifier == ByteString("id"))
-            .map(_.value.iterator.getInt(ByteOrder.LITTLE_ENDIAN))
-            .getOrElse(0)
-          tablet = Tablet(table.value.utf8String, RowRange(start.value, end.value), id)
-          state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
-          if state != TabletState.Closed // Do not assign closed tablets
-          uid = row.cells.find(_.qualifier == ByteString("node")).map(_.value.utf8String)
-        } yield {
-          uid.filter(_ => state == TabletState.Served).foreach { cell =>
-            // Assign the tablet to the specified node
-            uidToNode.get(cell).foreach { node =>
+        MetaHelpers.readRow(row) match {
+          case Some((tablet, state, uid)) =>
+            // Update the assignments
+            uid.flatMap(uidToNode.get).foreach { node =>
               tablets
                 .updateWith(node) { tablets =>
                   Some(tablets.map(_.appended(tablet)).getOrElse(Seq.empty))
                 }
-                .get
             }
-          }
-
-          queuedTablets += tablet
+            if (state != TabletState.Closed) {
+              queuedTablets += tablet
+            }
+          case None =>
+            context.log.error(s"Failed to parse meta row $row")
         }
         Behaviors.same
       case NodeComplete(_) =>
         context.log.debug("Received all rows")
         processQueue(queuedTablets)
-        if (queuedTablets.isEmpty)
-          idle(zk, client)
-        else
+        if (queuedTablets.isEmpty) {
+          policy.endCycle()
+          idle(zk, client, policy)
+        } else {
           Behaviors.same
+        }
       case NodeFailure(_, ex) =>
         context.log.error("Load balancer failed", ex)
-        idle(zk, client)
+        policy.endCycle()
+        idle(zk, client, policy)
     }
   }
 }

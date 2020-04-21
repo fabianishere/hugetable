@@ -205,28 +205,28 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
 
   private def parseMeta(row: Row): Option[(Node, Tablet)] = {
     for {
-      startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
-      endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
-      table <- row.cells.find(_.qualifier == ByteString("table"))
-      range = RowRange(startKey.value, endKey.value)
-      targetTablet = Tablet(table.value.utf8String, range)
-      state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
+      (tablet, state, uid) <- MetaHelpers.readRow(row)
       if state == TabletState.Served
-      nodeCell <- row.cells.find(_.qualifier == ByteString("node"))
-      uid = nodeCell.value.utf8String
+      uid <- uid
       metaAddress <- Try {
         CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid"))
       }.toOption
       targetNode = Node(uid, metaAddress)
-    } yield (targetNode, targetTablet)
+    } yield (targetNode, tablet)
   }
 
+  /**
+   * Resolve the address to the root tablet in ZooKeeper.
+   */
   private def resolveRoot(): Node = {
     val uid = new String(zookeeper.getData.forPath("/root"), StandardCharsets.UTF_8)
     val address = CoreAdapters.deserializeAddress(zookeeper.getData.forPath(s"/servers/$uid"))
     Node(uid, address)
   }
 
+  /**
+   * Resolve the address to the master node in ZooKeeper.
+   */
   private def resolveMaster(): Node = {
     val leader = zookeeper.getChildren.forPath("/leader").asScala.min(lockOrdering)
     val uid = new String(zookeeper.getData.forPath(s"/leader/$leader"), StandardCharsets.UTF_8)
@@ -235,7 +235,7 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   }
 
   /**
-   * Ordering for ZooKeeper locks.
+   * Ordering that is used by Curator LeaderLatch recipe.
    */
   private val lockOrdering: Ordering[String] = new Ordering[String] {
     private val lockName = "latch-"

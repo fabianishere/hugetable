@@ -1,4 +1,4 @@
-package nl.tudelft.htable.server.core
+package nl.tudelft.htable.server
 
 import java.net.InetSocketAddress
 

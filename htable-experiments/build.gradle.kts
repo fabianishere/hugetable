@@ -10,4 +10,3 @@ dependencies {
     implementation("org.rogach:scallop_${Library.SCALA_LIB}:${Library.SCALLOP}")
     runtimeOnly("org.slf4j:slf4j-simple:${Library.SLF4J}")
 }
-

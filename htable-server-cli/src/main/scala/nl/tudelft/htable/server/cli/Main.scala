@@ -6,8 +6,8 @@ import java.util.UUID
 import akka.actor.typed.ActorSystem
 import com.typesafe.config.ConfigFactory
 import nl.tudelft.htable.core.Node
-import nl.tudelft.htable.server.core.HTableActor
-import nl.tudelft.htable.storage.hbase.{HBaseStorageDriver, HBaseStorageDriverProvider}
+import nl.tudelft.htable.server.{HTableActor, RandomLoadBalancerPolicy, RoundRobinLoadBalancerPolicy}
+import nl.tudelft.htable.storage.hbase.HBaseStorageDriverProvider
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.hadoop.conf.Configuration
@@ -41,9 +41,16 @@ object Main {
     hconf.set("fs.defaultFS", conf.hadoop())
     val fs = FileSystem.get(hconf)
 
+    val loadBalancerPolicy = conf.loadBalancerPolicy() match {
+      case "round-robin" => new RoundRobinLoadBalancerPolicy()
+      case "random"      => new RandomLoadBalancerPolicy()
+      case value =>
+        throw new IllegalArgumentException(s"Unknown load balancer policy $value")
+    }
+
     val node = Node(UUID.randomUUID().toString, new InetSocketAddress("localhost", conf.port()))
     val driver = new HBaseStorageDriverProvider(fs)
-    ActorSystem(HTableActor(node, zookeeper, driver), "htable", actorConf)
+    ActorSystem(HTableActor(node, zookeeper, driver, loadBalancerPolicy), "htable", actorConf)
   }
 
   /**
@@ -73,6 +80,15 @@ object Main {
      * An option for specifying the port to connect to.
      */
     val port: ScallopOption[Int] = opt[Int](short = 'p', descr = "The port to connect to", required = true)
+
+    /**
+     * An option for specifying the load balancing policy.
+     */
+    val loadBalancerPolicy: ScallopOption[String] = opt[String](
+      descr = "The load balancing policy to use",
+      default = Some("round-robin")
+    )
+
     verify()
   }
 }

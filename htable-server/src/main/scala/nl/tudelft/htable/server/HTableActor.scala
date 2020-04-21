@@ -1,4 +1,4 @@
-package nl.tudelft.htable.server.core
+package nl.tudelft.htable.server
 
 import java.nio.ByteOrder
 
@@ -9,9 +9,9 @@ import akka.util.{ByteString, ByteStringBuilder}
 import nl.tudelft.htable.client.impl.DefaultServiceResolverImpl
 import nl.tudelft.htable.client.{CachingServiceResolver, HTableClient, HTableInternalClient}
 import nl.tudelft.htable.core._
-import nl.tudelft.htable.server.core.services.{AdminServiceImpl, ClientServiceImpl, InternalServiceImpl}
-import nl.tudelft.htable.server.core.util.ServerServiceResolver
-import nl.tudelft.htable.storage.{StorageDriver, StorageDriverProvider}
+import nl.tudelft.htable.server.services.{AdminServiceImpl, ClientServiceImpl, InternalServiceImpl}
+import nl.tudelft.htable.server.util.ServerServiceResolver
+import nl.tudelft.htable.storage.StorageDriverProvider
 import org.apache.curator.framework.CuratorFramework
 
 import scala.collection.mutable
@@ -50,8 +50,12 @@ object HTableActor {
    * @param self The node to represent.
    * @param zk The ZooKeeper client.
    * @param sdp The storage driver to use.
+   * @param loadBalancerPolicy The load balancer policy to use.
    */
-  def apply(self: Node, zk: CuratorFramework, sdp: StorageDriverProvider): Behavior[Command] =
+  def apply(self: Node,
+            zk: CuratorFramework,
+            sdp: StorageDriverProvider,
+            loadBalancerPolicy: LoadBalancerPolicy): Behavior[Command] =
     Behaviors
       .setup[Command] { context =>
         implicit val sys: ActorSystem[Nothing] = context.system
@@ -99,7 +103,8 @@ object HTableActor {
             context.watch(zkRef)
 
             // Spawn the load balancer
-            val loadBalancer = context.spawn(LoadBalancerActor(zkRef, client), name = "load-balancer")
+            val loadBalancer =
+              context.spawn(LoadBalancerActor(zkRef, client, loadBalancerPolicy), name = "load-balancer")
             context.watch(loadBalancer)
 
             started(self, client, admin, loadBalancer)

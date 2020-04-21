@@ -1,4 +1,4 @@
-package nl.tudelft.htable.server.core.services
+package nl.tudelft.htable.server.services
 
 import akka.actor.typed.{ActorRef, ActorSystem, DispatcherSelector}
 import akka.stream.scaladsl.Source
@@ -6,7 +6,7 @@ import akka.util.Timeout
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.core.Row
 import nl.tudelft.htable.protocol.client._
-import nl.tudelft.htable.server.core.NodeActor
+import nl.tudelft.htable.server.NodeActor
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise}

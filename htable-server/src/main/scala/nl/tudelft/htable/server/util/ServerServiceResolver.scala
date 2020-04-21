@@ -1,4 +1,4 @@
-package nl.tudelft.htable.server.core.util
+package nl.tudelft.htable.server.util
 
 import akka.stream.scaladsl.Source
 import akka.{Done, NotUsed}
