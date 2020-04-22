@@ -45,7 +45,7 @@ class ClusterTest extends AbstractIntegrationTest {
       TestUtils.startServer(node, new RoundRobinLoadBalancerPolicy())
     }
     // Wait until the servers are up
-    Thread.sleep(10000)
+    Thread.sleep(5000)
 
     client = TestUtils.startClient()
   }

@@ -78,8 +78,17 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
 
   override def read(query: Query): Source[Row, NotUsed] = {
     val nodes = query match {
-      case Get(_, key)           => resolve(Tablet(query.table, RowRange(key, key ++ ByteString(9, 9))))
-      case Scan(table, range, _) => resolve(Tablet(table, range))
+      // We append a null-byte to the end of the range to make it inclusive
+      case Get(_, key)           => resolve(Tablet(query.table, RowRange(key, key ++ ByteString(0))))
+      case Scan(table, range, reversed) =>
+        val tablets = resolve(Tablet(table, range))
+        // Make sure we reverse the tablets if our scan is reversed
+        if (reversed)
+          tablets
+            .fold(List.empty[(Node, Tablet)])((acc: List[(Node, Tablet)], curr: (Node, Tablet)) => curr :: acc) // Reverse
+            .mapConcat[(Node, Tablet)](identity)
+        else
+          tablets
     }
 
     nodes
@@ -150,28 +159,14 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
     val rootClient = resolver.openClient(rootAddress)
 
     // We append a null-byte to the end of the range to make it inclusive
-    val metaKey =
+    val metaTablet =
       if (tablet.table.equalsIgnoreCase("METADATA"))
-        ByteString("METADATA") ++ tablet.range.end ++ ByteString(0)
+        tablet
       else
-        ByteString("METADATA" ++ tablet.table) ++ tablet.range.end ++ ByteString(0)
+        Tablet("METADATA", RowRange(ByteString(tablet.table) ++ tablet.range.start,
+          ByteString(tablet.table) ++ tablet.range.end))
 
-    // Our resolve procedure works as follows:
-    // 1. Scan the metadata table from the end-key until the first matching start row occurs
-    // 2. Verify whether this row is still part of the table we are looking for
-    // 3. Reverse the rows
-    // 5. Convert the METADATA rows into a stream of nodes and tablets
-    val meta: Source[(Node, Tablet), NotUsed] =
-      read(Scan("METADATA", RowRange.rightBounded(metaKey), reversed = true), rootClient)
-        .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
-        .takeWhile(row =>
-          row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains("METADATA"))
-        .fold(List.empty[Row])((acc: List[Row], curr: Row) => curr :: acc) // Reverse
-        .mapConcat[Row](identity)
-        .mapConcat[(Node, Tablet)] { row =>
-          val res = parseMeta(row)
-          res.map(Seq(_)).getOrElse(Seq())
-        }
+    val meta = scanMeta(rootClient, metaTablet)
 
     // In case we are looking for rows in the METADATA table, we have already found our target tablets.
     if (tablet.table.equalsIgnoreCase("METADATA")) {
@@ -183,27 +178,59 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
       .flatMapConcat {
         case (metaNode, metaTablet) =>
           val metaClient = resolver.openClient(metaNode)
-          var prefixRange = RowRange.prefix(ByteString(tablet.table))
-          if (metaTablet.range.isRightBounded) {
-            prefixRange = RowRange(prefixRange.start, Order.keyOrdering.min(prefixRange.end, metaTablet.range.end))
-          }
 
-          read(Scan("METADATA", prefixRange), metaClient)
-            .dropWhile( // Drops rows until we find one with a higher end key
-              row =>
-                row.cells
-                  .find(_.qualifier == ByteString("end-key"))
-                  .exists(cell =>
-                    if (cell.value.isEmpty) false else Order.keyOrdering.lteq(cell.value, tablet.range.start)))
-            .takeWhile(row => // Take rows until we find one of a different table
-              row.cells.find(_.qualifier == ByteString("table")).map(_.value.utf8String).contains(tablet.table))
-            .mapConcat[(Node, Tablet)] { row =>
-              val res = parseMeta(row)
-              res.map(Seq(_)).getOrElse(Seq())
+          val range =
+            if (tablet.range.isRightBounded) {
+              var right = tablet.range.end
+              // Take into account the maximum row of the META tablet
+              if (metaTablet.range.isRightBounded) {
+                val metaRight = metaTablet.range.end.drop(tablet.table.length)
+                right = Order.keyOrdering.min(metaRight, right)
+              }
+              RowRange.rightBounded(right)
+            } else {
+              RowRange.unbounded
             }
+
+          scanMeta(metaClient, Tablet(tablet.table, range))
       }
   }
 
+  /**
+   * Scan the entries of a METADATA tablet.
+   *
+   * @param client The client to scan the tablet of.
+   * @param tablet The particular tablet to look for on this client.
+   * @return A source containing the METADATA rows of interest.
+   */
+  private def scanMeta(client: ClientServiceClient, tablet: Tablet): Source[(Node, Tablet), NotUsed]  = {
+    // We append a null-byte to the end of the range to make it inclusive
+    val range =
+      if (tablet.range.isUnbounded || !tablet.range.isRightBounded) {
+        RowRange.prefix(ByteString(tablet.table))
+      } else {
+        val left = ByteString(tablet.table)
+        val right = ByteString(tablet.table) ++ tablet.range.end ++ ByteString(0)
+        RowRange(left, right)
+      }
+
+    // Our resolve procedure works as follows:
+    // 1. Scan the metadata table from the end-key until the first matching start row occurs
+    // 2. Verify whether this row is still part of the table we are looking for
+    // 3. Reverse the rows
+    // 5. Convert the METADATA rows into a stream of nodes and tablets
+    read(Scan("METADATA", range, reversed = true), client)
+      // Take rows up until we find the first row which is outside our range (this is the first tablet)
+      .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
+      // Reverse the order of the cells
+      .fold(List.empty[Row])((acc: List[Row], curr: Row) => curr :: acc) // Reverse
+      .mapConcat[Row](identity)
+      .mapConcat[(Node, Tablet)](row => parseMeta(row).map(Seq(_)).getOrElse(Seq()))
+  }
+
+  /**
+   * Convert a [Row] into the [Node] that is hosting some [Tablet].
+   */
   private def parseMeta(row: Row): Option[(Node, Tablet)] = {
     for {
       (tablet, state, uid) <- MetaHelpers.readRow(row)

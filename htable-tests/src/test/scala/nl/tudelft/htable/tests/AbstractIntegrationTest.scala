@@ -116,7 +116,7 @@ abstract class AbstractIntegrationTest {
     val time = System.currentTimeMillis()
     val value = ByteString("my-value")
 
-    (0 until 4).foreach { index =>
+    (0 until 8 by 2).foreach { index =>
       val mutation = RowMutation("test", ByteString(index))
         .put(RowCell(column, time, value))
       val future = client.mutate(mutation)
@@ -145,7 +145,7 @@ abstract class AbstractIntegrationTest {
 
     val secondRow = probe.expectNext()
     val secondColumn = firstRow.cells.head
-    Assertions.assertEquals(ByteString(1), secondRow.key)
+    Assertions.assertEquals(ByteString(2), secondRow.key)
     Assertions.assertEquals(ByteString("my-column"), secondColumn.qualifier)
     Assertions.assertEquals(ByteString("my-value"), secondColumn.value)
 
@@ -160,16 +160,16 @@ abstract class AbstractIntegrationTest {
   @Order(6)
   @DisplayName("scan should process range")
   def testScanRange(): Unit = {
-    val probe = client.read(Scan("test", RowRange(ByteString(1), ByteString(3))))
+    val probe = client.read(Scan("test", RowRange(ByteString(1), ByteString(5))))
       .runWith(TestSink.probe[Row])
       .ensureSubscription()
       .request(2)
 
     val firstRow = probe.expectNext()
-    Assertions.assertEquals(ByteString(1), firstRow.key)
+    Assertions.assertEquals(ByteString(2), firstRow.key)
 
     val secondRow = probe.expectNext()
-    Assertions.assertEquals(ByteString(2), secondRow.key)
+    Assertions.assertEquals(ByteString(4), secondRow.key)
 
     probe.expectComplete()
   }
@@ -187,10 +187,10 @@ abstract class AbstractIntegrationTest {
       .request(4)
 
     val firstRow = probe.expectNext()
-    Assertions.assertEquals(ByteString(3), firstRow.key)
+    Assertions.assertEquals(ByteString(6), firstRow.key)
 
     val secondRow = probe.expectNext()
-    Assertions.assertEquals(ByteString(2), secondRow.key)
+    Assertions.assertEquals(ByteString(4), secondRow.key)
 
     probe.expectNextN(2)
     probe.expectComplete()
@@ -203,14 +203,14 @@ abstract class AbstractIntegrationTest {
   @Order(7)
   @DisplayName("get obtains single row")
   def testGet(): Unit = {
-    val probe = client.read(Get("test", ByteString(1)))
+    val probe = client.read(Get("test", ByteString(2)))
       .runWith(TestSink.probe[Row])
       .ensureSubscription()
 
     val row = probe.requestNext()
     val column = row.cells.head
 
-    Assertions.assertEquals(ByteString(1), row.key)
+    Assertions.assertEquals(ByteString(2), row.key)
     Assertions.assertEquals(ByteString("my-column"), column.qualifier)
     Assertions.assertEquals(ByteString("my-value"), column.value)
     probe.expectComplete()
@@ -223,7 +223,7 @@ abstract class AbstractIntegrationTest {
   @Order(8)
   @DisplayName("split returns successfully")
   def testSplit(): Unit = {
-    val future = client.split(Tablet("test", RowRange.unbounded), ByteString(2))
+    val future = client.split(Tablet("test", RowRange.unbounded), ByteString(4))
     Await.result(future, 5.seconds)
 
     // Wait a few seconds before the change is propagated
@@ -235,7 +235,7 @@ abstract class AbstractIntegrationTest {
    */
   @Test
   @Order(9)
-  @DisplayName("split update METADATA")
+  @DisplayName("split updates METADATA")
   def testSplitUpdateMetadata(): Unit = {
     val probe = client.read(Scan("METADATA", RowRange.unbounded))
       .runWith(TestSink.probe[Row])
@@ -249,7 +249,7 @@ abstract class AbstractIntegrationTest {
     Assertions.assertTrue(rowB.isDefined, "Row parses to correct value")
     val (tabletB, stateB, uidB) = rowB.get
     Assertions.assertEquals("test", tabletB.table, "The second tablet is test")
-    Assertions.assertEquals(RowRange.rightBounded(ByteString(2)), tabletB.range, "The second tablet is right bounded")
+    Assertions.assertEquals(RowRange.rightBounded(ByteString(4)), tabletB.range, "The second tablet is right bounded")
     Assertions.assertEquals(TabletState.Served, stateB, "The second tablet is served")
     Assertions.assertTrue(uidB.isDefined, "The second tablet must be located on some node")
     Assertions.assertEquals(1, tabletB.id, "The second identifier must be greater than zero")
@@ -258,7 +258,7 @@ abstract class AbstractIntegrationTest {
     Assertions.assertTrue(rowC.isDefined, "Row parses to correct value")
     val (tabletC, stateC, uidC) = rowC.get
     Assertions.assertEquals("test", tabletC.table, "The third tablet is test")
-    Assertions.assertEquals(RowRange.leftBounded(ByteString(2)), tabletC.range, "The third tablet is left bounded")
+    Assertions.assertEquals(RowRange.leftBounded(ByteString(4)), tabletC.range, "The third tablet is left bounded")
     Assertions.assertEquals(TabletState.Served, stateC, "The third tablet is served")
     Assertions.assertTrue(uidC.isDefined, "The third tablet must be located on some node")
     Assertions.assertEquals(1, tabletC.id, "The second identifier must be greater than zero")
@@ -273,27 +273,8 @@ abstract class AbstractIntegrationTest {
   @Order(10)
   @DisplayName("scan after split works")
   def testSplitScan(): Unit = {
-    val probe = client.read(Scan("test", RowRange.unbounded))
-      .runWith(TestSink.probe[Row])
-      .ensureSubscription()
-      .request(4)
-
-    val firstRow = probe.expectNext()
-    val firstColumn = firstRow.cells.head
-
-    Assertions.assertEquals(ByteString(0), firstRow.key)
-    Assertions.assertEquals(ByteString("my-column"), firstColumn.qualifier)
-    Assertions.assertEquals(ByteString("my-value"), firstColumn.value)
-
-    probe.expectNextN(2)
-
-    val lastRow = probe.expectNext()
-    val lastColumn = firstRow.cells.head
-    Assertions.assertEquals(ByteString(3), lastRow.key)
-    Assertions.assertEquals(ByteString("my-column"), lastColumn.qualifier)
-    Assertions.assertEquals(ByteString("my-value"), lastColumn.value)
-
-    probe.expectComplete()
+    testScanRange()
+    testScanReverse()
   }
 
   /**
@@ -303,17 +284,117 @@ abstract class AbstractIntegrationTest {
   @Order(11)
   @DisplayName("get after split works")
   def testSplitGet(): Unit = {
-    val probe = client.read(Get("test", ByteString(1)))
+    testGet()
+  }
+
+  /**
+   * A simple test to verify that we can invalidate the current assignments.
+   */
+  @Test
+  @Order(12)
+  @DisplayName("invalidate is successful")
+  def testInvalidate(): Unit = {
+    val future = client.invalidate(Seq.empty)
+    Await.result(future, 5.seconds)
+
+    // Wait a few seconds before the change is propagated
+    Thread.sleep(2000)
+  }
+
+  /**
+   * A simple test to verify that our scans still work after invalidation.
+   */
+  @Test
+  @Order(13)
+  @DisplayName("scan works after invalidation")
+  def testScanAfterInvalidate(): Unit = {
+    testSplitUpdateMetadata()
+    testSplitScan()
+  }
+
+  /**
+   * A simple test to verify whether we can add a row to a split table.
+   */
+  @Test
+  @Order(14)
+  @DisplayName("put after split is successful")
+  def testPutAfterSplitTable(): Unit = {
+    val column = ByteString("my-column")
+    val time = System.currentTimeMillis()
+    val value = ByteString("my-value")
+
+    (1 until 8 by 2).foreach { index =>
+      val mutation = RowMutation("test", ByteString(index))
+        .put(RowCell(column, time, value))
+      val future = client.mutate(mutation)
+      Await.result(future, 5.seconds)
+    }
+  }
+
+
+  /**
+   * A simple test to verify that our scans still work after a split put.
+   */
+  @Test
+  @Order(15)
+  @DisplayName("scan works after split put")
+  def testScanAfterSplitPut(): Unit = {
+    val probe = client.read(Scan("test", RowRange.unbounded))
       .runWith(TestSink.probe[Row])
       .ensureSubscription()
+      .request(8)
 
-    val row = probe.requestNext()
-    val column = row.cells.head
+    val firstRow = probe.expectNext()
+    Assertions.assertEquals(ByteString(0), firstRow.key)
 
-    Assertions.assertEquals(ByteString(1), row.key)
-    Assertions.assertEquals(ByteString("my-column"), column.qualifier)
-    Assertions.assertEquals(ByteString("my-value"), column.value)
+    val secondRow = probe.expectNext()
+    Assertions.assertEquals(ByteString(1), secondRow.key)
+
+    probe.expectNextN(5)
+
+    val lastRow = probe.expectNext()
+    Assertions.assertEquals(ByteString(7), lastRow.key)
 
     probe.expectComplete()
+  }
+
+
+  /**
+   * A simple test to verify that we can delete a table.
+   */
+  @Test
+  @Order(16)
+  @DisplayName("delete-table is successful")
+  def testDeleteTable(): Unit = {
+    val future = client.delete("test")
+
+    Await.result(future, 5.seconds)
+
+    // Wait a few seconds before the change is propagated
+    Thread.sleep(2000)
+  }
+
+  /**
+   * A simple test to verify that deleting a table updates the METADATA
+   */
+  @Test
+  @Order(16)
+  @DisplayName("delete-table updates METADATA")
+  def testDeleteTableUpdatesMetadata(): Unit = {
+    testInitial()
+  }
+
+  /**
+   * A simple test to verify that deleting a table prevents us from accessing it again.
+   */
+  @Test
+  @Order(17)
+  @DisplayName("delete-table prevents new acccess")
+  def testDeleteTablePreventsAccess(): Unit = {
+    client.read(Scan("test", RowRange.unbounded))
+      .runWith(TestSink.probe[Row])
+      .ensureSubscription()
+      .request(1)
+      .expectError()
   }
 }

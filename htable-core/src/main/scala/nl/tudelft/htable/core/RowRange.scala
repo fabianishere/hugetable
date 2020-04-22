@@ -50,7 +50,7 @@ object RowRange {
     // Essentially we are treating it like an 'unsigned very very long' and doing +1 manually.
     // Search for the place where the trailing 0xFFs start
     var offset = prefix.length
-    while (offset > 0 && prefix(offset - 1) != 0xFF) {
+    while (offset > 0 && prefix(offset - 1) == 0xFF.toByte) {
       offset -= 1
     }
 

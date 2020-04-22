@@ -91,9 +91,11 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
           // to HBase behavior
           val startRow = if (reversed) range.end.toArray else range.start.toArray
           val endRow = if (reversed) range.start.toArray else range.end.toArray
+          val enableWorkaround = !region.getRegionInfo.containsRow(startRow)
           val scan = new Scan()
             .setCacheBlocks(true) // Enable caching
-            .withStartRow(startRow, !reversed)
+             // XXX Workaround for exlcusive start row not working
+            .withStartRow(if (enableWorkaround) makeExclusive(range.end).toArray else startRow, !reversed || enableWorkaround)
             .withStopRow(endRow, reversed)
             .setReversed(reversed)
             .addFamily("hregion".getBytes("UTF-8"))
@@ -124,6 +126,19 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
           }.flatten
       }
     }
+  }
+
+  /**
+   * Make the specified key exclusive.
+   */
+  private def makeExclusive(key: ByteString): ByteString = {
+    if (key.isEmpty)
+      key
+    else if (key.last == 0x00.toByte)
+      key.dropRight(1)
+    else
+      key.dropRight(1) ++ ByteString(key.last - 1)
+
   }
 
   override def split(splitKey: ByteString): (Tablet, Tablet) = {

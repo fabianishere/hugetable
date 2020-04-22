@@ -23,6 +23,9 @@ message Tablet {
 
     // The end key of the tablet.
     bytes end_key = 3;
+
+    // The optional tablet identifier.
+    int32 id = 4;
 }
 
 // A row in a table.

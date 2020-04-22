@@ -16,13 +16,13 @@ object ClientAdapters {
    * Translate a core [Tablet] to Protobuf [Tablet].
    */
   implicit def tabletToProtobuf(tablet: Tablet): protocol.Tablet =
-    protocol.Tablet(tableName = tablet.table, startKey = tablet.range.start, endKey = tablet.range.end)
+    protocol.Tablet(tableName = tablet.table, startKey = tablet.range.start, endKey = tablet.range.end, id = tablet.id)
 
   /**
    * Translate a core [Tablet] to Protobuf [Tablet].
    */
   implicit def tabletToCore(tablet: protocol.Tablet): Tablet =
-    Tablet(tablet.tableName, RowRange(tablet.startKey, tablet.endKey))
+    Tablet(tablet.tableName, RowRange(tablet.startKey, tablet.endKey), id = tablet.id)
 
   /**
    * Convert the specified [Query] to a [protocol.client.Query].
