@@ -10,8 +10,9 @@ dependencies {
     implementation("com.typesafe.scala-logging:scala-logging_${Library.SCALA_LIB}:${Library.SCALA_LOGGING}")
 
 
-    implementation("org.apache.hbase:hbase:2.2.4")
-    implementation("org.apache.hbase:hbase-common:2.2.4")
-    implementation("org.apache.hbase:hbase-server:2.2.4")
-    implementation("org.apache.hadoop:hadoop-client:3.0.3")
+    implementation("org.apache.hbase:hbase-server:2.2.4") {
+        exclude(group = "org.slf4j", module = "slf4j-log4j12")
+        exclude(group = "log4j")
+    }
+    implementation("org.apache.hadoop:hadoop-client:3.1.3")
 }

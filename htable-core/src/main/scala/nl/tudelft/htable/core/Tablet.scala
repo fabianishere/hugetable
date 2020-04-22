@@ -1,5 +1,7 @@
 package nl.tudelft.htable.core
 
+import nl.tudelft.htable.core.Order
+
 /**
  * A tablet is a subset of a table.
  */

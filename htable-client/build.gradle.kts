@@ -7,7 +7,9 @@ plugins {
 
 dependencies {
     api(project(":htable-core"))
-    api("org.apache.curator:curator-framework:${Library.CURATOR}")
+    api("org.apache.curator:curator-framework:${Library.CURATOR}") {
+        exclude(group = "log4j")
+    }
     api("com.typesafe.akka:akka-stream_${Library.SCALA_LIB}:${Library.AKKA}")
 
     implementation(project(":htable-protocol"))

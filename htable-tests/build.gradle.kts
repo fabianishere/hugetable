@@ -8,7 +8,18 @@ plugins {
 dependencies {
     testImplementation(project(":htable-server"))
     testImplementation(project(":htable-client"))
-    testImplementation("org.apache.curator:curator-test:${Library.CURATOR}")
-    testImplementation("org.apache.hadoop:hadoop-minicluster:3.1.3")
+    testImplementation(project(":htable-storage-hbase"))
+    testImplementation("org.apache.curator:curator-test:${Library.CURATOR}") {
+        exclude(group = "org.slf4j", module = "slf4j-log4j12")
+        exclude(group = "log4j")
+    }
+    testImplementation("org.apache.hadoop:hadoop-minicluster:3.1.3") {
+        exclude(group = "org.apache.curator", module = "curator-framework")
+        exclude(group = "org.apache.curator", module = "curator-recipes")
+        exclude(group = "org.slf4j", module = "slf4j-log4j12")
+        exclude(group = "log4j")
+    }
+    testImplementation("com.typesafe.akka:akka-stream-testkit_${Library.SCALA_LIB}:${Library.AKKA}")
+    testImplementation("org.apache.logging.log4j:log4j-slf4j18-impl:2.13.1")
+    testImplementation("org.apache.logging.log4j:log4j-jcl:2.13.1")
 }
-

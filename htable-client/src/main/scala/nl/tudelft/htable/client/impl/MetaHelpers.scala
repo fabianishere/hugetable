@@ -19,8 +19,12 @@ private[htable] object MetaHelpers {
       startKey <- row.cells.find(_.qualifier == ByteString("start-key"))
       endKey <- row.cells.find(_.qualifier == ByteString("end-key"))
       table <- row.cells.find(_.qualifier == ByteString("table"))
+      id = row.cells
+        .find(_.qualifier == ByteString("id"))
+        .map(_.value.iterator.getInt(ByteOrder.LITTLE_ENDIAN))
+        .getOrElse(0)
       range = RowRange(startKey.value, endKey.value)
-      targetTablet = Tablet(table.value.utf8String, range)
+      targetTablet = Tablet(table.value.utf8String, range, id)
       state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
       nodeUid = row.cells
         .find(_.qualifier == ByteString("node"))

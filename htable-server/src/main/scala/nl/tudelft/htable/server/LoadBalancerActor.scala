@@ -33,7 +33,7 @@ object LoadBalancerActor {
   /**
    * Received when a node reports its tablets.
    */
-  private final case class NodeReport(node: Node, tablets: Seq[Tablet]) extends Command
+  private final case class NodeReport(node: Node, tablets: Set[Tablet]) extends Command
 
   /**
    * Received when we fail to receive a response from a [NodeManager].
@@ -87,12 +87,12 @@ object LoadBalancerActor {
 
     nodes.foreach { node =>
       context.pipeToSelf(client.report(node)) {
-        case Success(value)     => NodeReport(node, value)
+        case Success(value)     => NodeReport(node, value.toSet)
         case Failure(exception) => NodeFailure(node, exception)
       }
     }
 
-    val responses = mutable.HashMap[Node, Seq[Tablet]]()
+    val responses = mutable.HashMap[Node, Set[Tablet]]()
 
     Behaviors.receiveMessagePartial {
       case NodeReport(node, tablets) =>
@@ -104,7 +104,7 @@ object LoadBalancerActor {
         else
           Behaviors.same
       case NodeFailure(node, _) =>
-        responses(node) = Seq.empty
+        responses(node) = Set.empty
         if (responses.size == nodes.size)
           reconstruct(client, policy, responses)
         else
@@ -118,7 +118,7 @@ object LoadBalancerActor {
    */
   private def reconstruct(client: HTableInternalClient,
                           policy: LoadBalancerPolicy,
-                          tablets: mutable.HashMap[Node, Seq[Tablet]]): Behavior[Command] = Behaviors.setup { context =>
+                          tablets: mutable.HashMap[Node, Set[Tablet]]): Behavior[Command] = Behaviors.setup { context =>
     implicit val timeout: Timeout = 3.seconds
     implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.blocking())
     implicit val mat: Materializer = Materializer(context.system)
@@ -142,9 +142,14 @@ object LoadBalancerActor {
         val selectedNode = policy.select(Tablet.root)
         context.log.debug(s"Assigning tablet root to $selectedNode")
         // Make sure we also assign the tablet
-        client.assign(selectedNode, Tablet.root +: tablets.getOrElse(selectedNode, Seq.empty))
+        val nodeAssignment = tablets.getOrElse(selectedNode, Set.empty) + Tablet.root
+        client.assign(selectedNode, nodeAssignment)
         selectedNode
     }
+
+    // Clear the current assignments
+    tablets.clear()
+    tablets(rootNode) = Set(Tablet.root)
 
     // Query the root node
     query(rootNode)
@@ -166,14 +171,13 @@ object LoadBalancerActor {
     /**
      * Assign the specified [tablet] to the specified [node].
      */
-    def assign(tablet: Tablet, node: Node, shouldUpdateMeta: Boolean = true, isNew: Boolean = true): Unit = {
+    def assign(tablet: Tablet, node: Node, shouldUpdateMeta: Boolean = true, isNew: Boolean = false): Unit = {
       // Note that this operation must always return some Seq value
       val assignments = tablets
         .updateWith(node) { tablets =>
-          Some(tablets.map(_.appended(tablet)).getOrElse(Seq.empty))
+          Some(tablets.map(_ + tablet).getOrElse(Set.empty))
         }
         .get
-      context.log.debug(s"Assigning tablet $tablet to $node")
 
       // Update metadata tablet to reflect the assignment
       val key = ByteString(tablet.table) ++ tablet.range.start
@@ -190,6 +194,7 @@ object LoadBalancerActor {
           newAssignment.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
 
 
+      context.log.debug(s"Assigning $tablet to $node [$assignments]")
       // Assign the tablet to the chosen node
       client.assign(node, assignments)
         .andThen { _ =>
@@ -219,7 +224,7 @@ object LoadBalancerActor {
           case None =>
             val node = policy.select(tablet)
 
-            assign(tablet, node, isNew = !Tablet.isRoot(tablet))
+            assign(tablet, node)
             newAssignment(tablet) = node
             node
         }
@@ -238,12 +243,12 @@ object LoadBalancerActor {
         context.log.debug(s"Received row $row")
         MetaHelpers.readRow(row) match {
           case Some((tablet, state, uid)) =>
+            context.log.debug(s"Found $tablet $state $uid")
+
             // Update the assignments
             uid.flatMap(uidToNode.get).foreach { node =>
               tablets
-                .updateWith(node) { tablets =>
-                  Some(tablets.map(_.appended(tablet)).getOrElse(Seq.empty))
-                }
+                .updateWith(node) { tablets => Some(tablets.map(_ + tablet).getOrElse(Set.empty)) }
             }
             if (state != TabletState.Closed) {
               queuedTablets += tablet
@@ -252,16 +257,23 @@ object LoadBalancerActor {
             context.log.error(s"Failed to parse meta row $row")
         }
         Behaviors.same
-      case NodeComplete(_) =>
-        context.log.debug("Received all rows")
-
-        processQueue(queuedTablets)
-
-        if (queuedTablets.isEmpty) {
-          policy.endCycle()
+      case NodeComplete(node) =>
+        if (queuedTablets.isEmpty && node == rootNode) {
+          context.log.info(s"$node tablet is empty. Initializing METADATA")
+          // If the root node does not contain any rows, it means that the METADATA table is not populated. Therefore,
+          // we initialize it here.
+          assign(Tablet.root, rootNode, isNew = true)
           idle(client, policy)
         } else {
-          Behaviors.same
+          context.log.debug(s"Queued ${queuedTablets.size} METADATA rows")
+          processQueue(queuedTablets)
+
+          if (queuedTablets.isEmpty) {
+            policy.endCycle()
+            idle(client, policy)
+          } else {
+            Behaviors.same
+          }
         }
       case NodeFailure(_, ex) =>
         context.log.error("Load balancer failed", ex)

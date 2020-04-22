@@ -23,7 +23,7 @@ final case class RowRange(start: ByteString, end: ByteString) {
   /**
    * Determine whether this row range is unbounded.
    */
-  def isUnbounded: Boolean = !(isLeftBounded && isRightBounded)
+  def isUnbounded: Boolean = !isLeftBounded && !isRightBounded
 }
 
 object RowRange {

@@ -6,6 +6,7 @@ import nl.tudelft.htable.core.Node
 import nl.tudelft.htable.protocol.CoreAdapters
 import nl.tudelft.htable.server.curator.{GroupMember, GroupMemberListener}
 import org.apache.curator.framework.CuratorFramework
+import org.apache.curator.framework.imps.CuratorFrameworkState
 import org.apache.curator.framework.recipes.cache.ChildData
 import org.apache.curator.framework.recipes.leader.{LeaderLatch, LeaderLatchListener}
 import org.apache.curator.framework.recipes.nodes.PersistentNode

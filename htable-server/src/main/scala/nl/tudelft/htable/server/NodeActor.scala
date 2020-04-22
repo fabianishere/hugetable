@@ -7,10 +7,8 @@ import akka.util.ByteString
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.client.HTableInternalClient
 import nl.tudelft.htable.client.impl.MetaHelpers
-import nl.tudelft.htable.core.TabletState.TabletState
 import nl.tudelft.htable.core._
-import nl.tudelft.htable.server.AdminActor.{Command, CreateTable, DeleteTable, Enable, Event, Invalidate, enabled}
-import nl.tudelft.htable.storage.{StorageDriver, StorageDriverProvider, TabletDriver}
+import nl.tudelft.htable.storage.{StorageDriverProvider, TabletDriver}
 
 import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Promise}
@@ -69,7 +67,7 @@ object NodeActor {
   /**
    * An event to indicate that the node is now serving the specified tablets.
    */
-  final case class Serving(newTablets: Seq[Tablet], removedTablets: Seq[Tablet]) extends Event
+  final case class Serving(newTablets: Set[Tablet], removedTablets: Set[Tablet]) extends Event
 
   /**
    * Construct the behavior of the node actor.
@@ -94,21 +92,27 @@ object NodeActor {
         context.log.info("Enabling node endpoint")
         enabled(self, sdp, listener, client)
       case Ping(promise) =>
+        context.log.warn("Pinging disabled node")
         promise.success(Done)
         Behaviors.same
       case Report(promise) =>
+        context.log.warn("Reporting disabled node")
         promise.success(Seq.empty)
         Behaviors.same
       case Assign(_, promise) =>
+        context.log.warn("Assigning on disabled node")
         promise.failure(new IllegalStateException(s"Node endpoint not enabled for node $self"))
         Behaviors.same
       case Read(_, promise) =>
+        context.log.warn("Reading on disabled node")
         promise.failure(new NotServingTabletException(s"The tablet is not served on this node"))
         Behaviors.same
       case Mutate(_, promise) =>
+        context.log.warn("Mutating on disabled node")
         promise.failure(new NotServingTabletException(s"The tablet is not served on this node"))
         Behaviors.same
       case Split(_, _, promise) =>
+        context.log.warn("Splitting on disabled node")
         promise.failure(new NotServingTabletException(s"The tablet is not served on this node"))
         Behaviors.same
     }
@@ -128,17 +132,15 @@ object NodeActor {
       implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.blocking())
       context.log.info(s"Starting actor for node $self")
       val storageDriver = sdp.create(self)
-      val tablets = new mutable.TreeMap[Tablet, TabletDriver]()
+      val tables = new mutable.HashMap[String, mutable.TreeMap[ByteString, TabletDriver]]()
 
       /**
        * Find the tablet closest to the given key.
        */
-      def find(table: String, key: ByteString): Option[(Tablet, TabletDriver)] = {
-        val nextKey = key ++ ByteString(0) // Ensure that our key is strictly greater
-        tablets
-          .rangeTo(Tablet(table, RowRange.leftBounded(nextKey)))
-          .dropWhile(_._1.table != table)
-          .lastOption
+      def find(table: String, key: ByteString): Option[TabletDriver] = {
+        tables.get(table)
+          .flatMap(tablets => tablets.rangeTo(key).lastOption)
+          .map(_._2)
       }
 
       Behaviors
@@ -147,25 +149,32 @@ object NodeActor {
             promise.success(Done)
             Behaviors.same
           case Report(promise) =>
-            promise.success(tablets.keys.toSeq)
+            promise.success(tables.flatMap(_._2.values).map(_.tablet).toSeq)
             Behaviors.same
           case Assign(newTablets, promise) =>
+            val currentTablets = tables.flatMap(_._2.values).map(_.tablet).toSet
             val newTabletsSet = newTablets.toSet
-            val removeTablets = tablets.keySet.diff(newTabletsSet)
-            val addTablets = newTabletsSet.diff(tablets.keySet)
+            val removeTablets = currentTablets.diff(newTabletsSet)
+            val addTablets = newTabletsSet.diff(currentTablets)
 
             // Remove tablets
             for (tablet <- removeTablets) {
-              val driver = tablets.remove(tablet)
+              context.log.info(s"REMOVE: $tablet from $self")
+              val driver = tables.get(tablet.table).flatMap(_.remove(tablet.range.start))
               driver.foreach(_.close())
             }
 
             // Spawn new tablet managers
             for (tablet <- addTablets) {
-              tablets.put(tablet, storageDriver.createTablet(tablet))
+              context.log.info(s"SPAWN: $tablet on $self")
+              val tablets = tables.getOrElseUpdate(tablet.table, new mutable.TreeMap[ByteString, TabletDriver]()(Order.keyOrdering))
+              tablets.put(tablet.range.start, storageDriver.createTablet(tablet))
             }
 
-            listener ! Serving(addTablets.toSeq, removeTablets.toSeq)
+            // Inform root actor if changes
+            if (addTablets.nonEmpty || removeTablets.nonEmpty) {
+              listener ! Serving(addTablets, removeTablets)
+            }
 
             promise.success(Done)
             Behaviors.same
@@ -174,20 +183,33 @@ object NodeActor {
             query match {
               case Get(table, key) =>
                 find(table, key) match {
-                  case Some((_, driver)) => promise.success(driver.read(query))
-                  case None              => promise.failure(NotServingTabletException(s"The key $key is not served"))
+                  case Some(driver) =>
+                    context.log.trace(s"READ: Asking $driver for $key in $table")
+                    promise.success(driver.read(query))
+                  case None              =>
+                    context.log.debug(s"READ: Unknown $key in $table")
+                    promise.failure(NotServingTabletException(s"The key $key is not served"))
                 }
               case Scan(table, range, reversed) =>
                 find(table, range.start) match {
-                  case Some((start, _)) =>
-                    val end = Tablet(table, RowRange.leftBounded(range.end))
+                  case Some(startDriver) =>
+                    val tablets = tables(table)
                     val submap =
-                      if (range.isUnbounded) tablets.rangeFrom(start).rangeTo(end) else tablets.range(start, end)
+                      if (range.isUnbounded) {
+                        tablets
+                      } else if (!range.isRightBounded) {
+                        tablets.rangeFrom(startDriver.tablet.range.start)
+                      } else {
+                        tablets.range(startDriver.tablet.range.start, range.end)
+                      }
+
+                    context.log.trace(s"READ: Asking $submap for $range in $table")
                     val source: Source[Row, NotUsed] =
                       Source(if (reversed) submap.toSeq.reverse else submap.toSeq)
                         .flatMapConcat { case (_, driver) => driver.read(query) }
                     promise.success(source)
                   case None =>
+                    context.log.debug(s"READ: Unknown $range in $table")
                     promise.failure(new IllegalArgumentException("Start key not in range"))
                 }
             }
@@ -196,17 +218,21 @@ object NodeActor {
             context.log.debug(s"MUTATE $mutation")
 
             find(mutation.table, mutation.key) match {
-              case Some((_, driver)) =>
+              case Some(driver) =>
+                context.log.trace(s"MUTATE: Asking $driver for ${mutation.key} in ${mutation.table}")
                 promise.complete(Try { driver.mutate(mutation) }.map(_ => Done))
               case None =>
+                context.log.debug(s"MUTATE: Unknown ${mutation.key} in ${mutation.table}")
                 promise.failure(NotServingTabletException(s"The key ${mutation.key} is not served"))
             }
             Behaviors.same
           case Split(tablet, splitKey, promise) =>
-            context.log.debug(s"Split tablet $tablet at $splitKey")
+            context.log.debug(s"SPLIT: $tablet at $splitKey")
             find(tablet.table, tablet.range.start) match {
-              case Some((tablet, driver)) =>
+              case Some(driver) =>
                 try {
+                  context.log.trace(s"SPLIT: Asking $driver for ${splitKey} in ${tablet.table}")
+
                   val (left, right) = driver.split(splitKey)
                   promise.completeWith(for {
                     _ <- client.mutate(MetaHelpers.writeExisting(tablet, TabletState.Closed, None))
@@ -215,16 +241,19 @@ object NodeActor {
                     _ <- client.invalidate(Seq(tablet, left, right))
                   } yield Done)
                 } catch {
-                  case e: Throwable => promise.failure(e)
+                  case e: Throwable =>
+                    context.log.warn("SPLIT: Failure during split", e)
+                    promise.failure(e)
                 }
               case None =>
+                context.log.debug(s"SPLIT: Unknown ${tablet.range} in ${tablet.table}")
                 promise.failure(NotServingTabletException(s"The tablet $tablet is not served"))
             }
             Behaviors.same
         }
         .receiveSignal {
           case (_, PostStop) =>
-            tablets.foreach(_._2.close())
+            tables.flatMap(_._2).foreach(_._2.close())
             storageDriver.close()
             Behaviors.stopped
         }

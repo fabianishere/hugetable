@@ -131,8 +131,8 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
     resolver.openInternal(node).report(ReportRequest()).map(_.tablets)
   }
 
-  override def assign(node: Node, tablets: Seq[Tablet]): Future[Done] = {
-    resolver.openInternal(node).assign(AssignRequest(tablets)).map(_ => Done)
+  override def assign(node: Node, tablets: Set[Tablet]): Future[Done] = {
+    resolver.openInternal(node).assign(AssignRequest(tablets.toSeq)).map(_ => Done)
   }
 
   override def closed(): Future[Done] = promise.future
@@ -187,8 +187,9 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
           if (metaTablet.range.isRightBounded) {
             prefixRange = RowRange(prefixRange.start, Order.keyOrdering.min(prefixRange.end, metaTablet.range.end))
           }
+
           read(Scan("METADATA", prefixRange), metaClient)
-            .dropWhile(
+            .dropWhile( // Drops rows until we find one with a higher end key
               row =>
                 row.cells
                   .find(_.qualifier == ByteString("end-key"))

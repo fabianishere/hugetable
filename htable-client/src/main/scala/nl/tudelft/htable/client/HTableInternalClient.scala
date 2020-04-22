@@ -35,5 +35,5 @@ private[htable] trait HTableInternalClient extends HTableClient {
    * @param node The node to assign the tablets to.
    * @param tablets The tablets to assign to the node.
    */
-  def assign(node: Node, tablets: Seq[Tablet]): Future[Done]
+  def assign(node: Node, tablets: Set[Tablet]): Future[Done]
 }

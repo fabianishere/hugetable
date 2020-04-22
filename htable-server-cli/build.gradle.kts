@@ -17,5 +17,7 @@ dependencies {
 
     implementation("org.apache.hadoop:hadoop-client:3.0.3")
     implementation(project(":htable-storage-hbase"))
+    implementation("org.apache.logging.log4j:log4j-slf4j18-impl:2.13.1")
+    implementation("org.apache.logging.log4j:log4j-jcl:2.13.1")
 }
 
