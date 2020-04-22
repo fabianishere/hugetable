@@ -102,12 +102,15 @@ object HTableActor {
             val zkRef = context.spawn(ZooKeeperActor(self, zk, zkAdapter), name = "zookeeper")
             context.watch(zkRef)
 
+            // Enable the node now (by default)
+            nodeActor ! NodeActor.Enable(client)
+
             // Spawn the load balancer
             val loadBalancer =
-              context.spawn(LoadBalancerActor(zkRef, client, loadBalancerPolicy), name = "load-balancer")
+              context.spawn(LoadBalancerActor(client, loadBalancerPolicy), name = "load-balancer")
             context.watch(loadBalancer)
 
-            started(self, client, admin, loadBalancer)
+            started(self, client, admin, loadBalancer, zkRef)
         }
       }
 
@@ -117,6 +120,8 @@ object HTableActor {
    * @param self The self that has been spawned.
    * @param client The client to communicate with other nodes.
    * @param admin The admin actor.
+   * @param loadBalancer The reference to the load balancer.
+   * @param zk The reference to the ZooKeeper actor.
    * @param isMaster A flag to indicate the node is a master.
    * @param nodes The active nodes in the cluster.
    */
@@ -124,6 +129,7 @@ object HTableActor {
               client: HTableInternalClient,
               admin: ActorRef[AdminActor.Command],
               loadBalancer: ActorRef[LoadBalancerActor.Command],
+              zk: ActorRef[ZooKeeperActor.Command],
               isMaster: Boolean = false,
               nodes: mutable.Set[Node] = mutable.HashSet()): Behavior[Command] =
     Behaviors.setup { context =>
@@ -138,7 +144,7 @@ object HTableActor {
             // Schedule a load balancing job
             loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
 
-            started(self, client, admin, loadBalancer, isMaster = true, nodes)
+            started(self, client, admin, loadBalancer, zk, isMaster = true, nodes)
           case ZooKeeperEvent(ZooKeeperActor.Overthrown) =>
             context.log.info("Node has been overthrown")
             Behaviors.stopped
@@ -168,25 +174,13 @@ object HTableActor {
             // Start a load balancing cycle
             loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
             Behaviors.same
-          case NodeEvent(NodeActor.Invalidated(tablets)) =>
-            context.log.info(s"Invalidating tablets: ${tablets}")
-            Future
-              .reduceLeft(tablets.map {
-                case (tablet, state) =>
-                  val time = System.currentTimeMillis
-                  val mutation = RowMutation("METADATA", ByteString(tablet.table) ++ tablet.range.start)
-                    .put(RowCell(ByteString("table"), time, ByteString(tablet.table)))
-                    .put(RowCell(ByteString("start-key"), time, tablet.range.start))
-                    .put(RowCell(ByteString("end-key"), time, tablet.range.end))
-                    .put(RowCell(ByteString("state"), time, ByteString(state.id)))
-                    .put(RowCell(ByteString("id"),
-                                 time,
-                                 new ByteStringBuilder().putInt(tablet.id)(ByteOrder.LITTLE_ENDIAN).result()))
-                  client.mutate(mutation)
-              })((x, _) => x)
-              .flatMap { _ =>
-                client.invalidate(tablets.keys.toSeq)
-              }
+          case NodeEvent(NodeActor.Serving(tabletsAdded, tabletsRemoved)) =>
+            context.log.debug(s"Node has been assigned new tablets [added=$tabletsAdded, removed=$tabletsRemoved]")
+            if (tabletsAdded.exists(Tablet.isRoot)) {
+              zk ! ZooKeeperActor.SetRoot(Some(self))
+            } else if (tabletsRemoved.exists(Tablet.isRoot)) {
+              zk ! ZooKeeperActor.SetRoot(None)
+            }
             Behaviors.same
           case _ => throw new IllegalArgumentException()
         }

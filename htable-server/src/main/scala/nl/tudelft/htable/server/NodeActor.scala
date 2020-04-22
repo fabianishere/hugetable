@@ -1,16 +1,19 @@
 package nl.tudelft.htable.server
 
 import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.{ActorRef, Behavior, PostStop}
+import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector, PostStop}
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import akka.{Done, NotUsed}
+import nl.tudelft.htable.client.HTableInternalClient
+import nl.tudelft.htable.client.impl.MetaHelpers
 import nl.tudelft.htable.core.TabletState.TabletState
 import nl.tudelft.htable.core._
+import nl.tudelft.htable.server.AdminActor.{Command, CreateTable, DeleteTable, Enable, Event, Invalidate, enabled}
 import nl.tudelft.htable.storage.{StorageDriver, StorageDriverProvider, TabletDriver}
 
 import scala.collection.mutable
-import scala.concurrent.Promise
+import scala.concurrent.{ExecutionContext, Promise}
 import scala.util.Try
 
 /**
@@ -22,6 +25,11 @@ object NodeActor {
    * Commands that are accepted by the [NodeActor].
    */
   sealed trait Command
+
+  /**
+   * A command to enable the node commands.
+   */
+  final case class Enable(client: HTableInternalClient) extends Command
 
   /**
    * Message received when trying to ping the node.
@@ -59,9 +67,9 @@ object NodeActor {
   sealed trait Event
 
   /**
-   * An event to indicate that the specified tablets have been invalidated.
+   * An event to indicate that the node is now serving the specified tablets.
    */
-  final case class Invalidated(tablets: Map[Tablet, TabletState]) extends Event
+  final case class Serving(newTablets: Seq[Tablet], removedTablets: Seq[Tablet]) extends Event
 
   /**
    * Construct the behavior of the node actor.
@@ -70,8 +78,54 @@ object NodeActor {
    * @param sdp The driver to use for accessing the data storage.
    * @param listener The listener to emit events to.
    */
-  def apply(self: Node, sdp: StorageDriverProvider, listener: ActorRef[Event]): Behavior[Command] = Behaviors.setup {
+  def apply(self: Node, sdp: StorageDriverProvider, listener: ActorRef[Event]): Behavior[Command] =
+    disabled(self, sdp, listener)
+
+  /**
+   * Construct the behavior of the node actor when the endpoint is disabled.
+   *
+   * @param self The node that we represent.
+   * @param sdp The driver to use for accessing the data storage.
+   * @param listener The listener to emit events to.
+   */
+  def disabled(self: Node, sdp: StorageDriverProvider, listener: ActorRef[Event]): Behavior[Command] = Behaviors.setup { context =>
+    Behaviors.receiveMessagePartial {
+      case Enable(client) =>
+        context.log.info("Enabling node endpoint")
+        enabled(self, sdp, listener, client)
+      case Ping(promise) =>
+        promise.success(Done)
+        Behaviors.same
+      case Report(promise) =>
+        promise.success(Seq.empty)
+        Behaviors.same
+      case Assign(_, promise) =>
+        promise.failure(new IllegalStateException(s"Node endpoint not enabled for node $self"))
+        Behaviors.same
+      case Read(_, promise) =>
+        promise.failure(new NotServingTabletException(s"The tablet is not served on this node"))
+        Behaviors.same
+      case Mutate(_, promise) =>
+        promise.failure(new NotServingTabletException(s"The tablet is not served on this node"))
+        Behaviors.same
+      case Split(_, _, promise) =>
+        promise.failure(new NotServingTabletException(s"The tablet is not served on this node"))
+        Behaviors.same
+    }
+  }
+  /**
+   * Construct the behavior of an enabled node actor.
+   *
+   * @param self The node that we represent.
+   * @param sdp The driver to use for accessing the data storage.
+   * @param listener The listener to emit events to.
+   */
+  def enabled(self: Node,
+              sdp: StorageDriverProvider,
+              listener: ActorRef[Event],
+              client: HTableInternalClient): Behavior[Command] = Behaviors.setup {
     context =>
+      implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.blocking())
       context.log.info(s"Starting actor for node $self")
       val storageDriver = sdp.create(self)
       val tablets = new mutable.TreeMap[Tablet, TabletDriver]()
@@ -111,6 +165,8 @@ object NodeActor {
               tablets.put(tablet, storageDriver.createTablet(tablet))
             }
 
+            listener ! Serving(addTablets.toSeq, removeTablets.toSeq)
+
             promise.success(Done)
             Behaviors.same
           case Read(query, promise) =>
@@ -123,7 +179,7 @@ object NodeActor {
                 }
               case Scan(table, range, reversed) =>
                 find(table, range.start) match {
-                  case Some((start, driver)) =>
+                  case Some((start, _)) =>
                     val end = Tablet(table, RowRange.leftBounded(range.end))
                     val submap =
                       if (range.isUnbounded) tablets.rangeFrom(start).rangeTo(end) else tablets.range(start, end)
@@ -150,18 +206,17 @@ object NodeActor {
             context.log.debug(s"Split tablet $tablet at $splitKey")
             find(tablet.table, tablet.range.start) match {
               case Some((tablet, driver)) =>
-                promise.complete(Try {
+                try {
                   val (left, right) = driver.split(splitKey)
-
-                  val invalidations = new mutable.HashMap[Tablet, TabletState]
-                  invalidations(tablet) = TabletState.Closed
-                  invalidations(left) = TabletState.Unassigned
-                  invalidations(right) = TabletState.Unassigned
-
-                  listener ! Invalidated(invalidations.toMap)
-
-                  Done
-                })
+                  promise.completeWith(for {
+                    _ <- client.mutate(MetaHelpers.writeExisting(tablet, TabletState.Closed, None))
+                    _ <- client.mutate(MetaHelpers.writeNew(left, TabletState.Unassigned, None))
+                    _ <- client.mutate(MetaHelpers.writeNew(right, TabletState.Unassigned, None))
+                    _ <- client.invalidate(Seq(tablet, left, right))
+                  } yield Done)
+                } catch {
+                  case e: Throwable => promise.failure(e)
+                }
               case None =>
                 promise.failure(NotServingTabletException(s"The tablet $tablet is not served"))
             }

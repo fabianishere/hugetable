@@ -43,7 +43,7 @@ object ZooKeeperActor {
   /**
    * Message to update the location of the root tablet.
    */
-  final case class SetRoot(node: Node) extends Command
+  final case class SetRoot(node: Option[Node]) extends Command
 
   /**
    * Internal message indicating that the server was elected to be the leader.
@@ -130,17 +130,25 @@ object ZooKeeperActor {
       Behaviors
         .receiveMessage[Command] {
           case SetRoot(node) =>
-            context.log.debug(s"Root tablet located at $node")
-            rootClaim match {
-              case Some(value) =>
-                value.setData(node.uid.getBytes("UTF-8"))
+            node match {
+              case Some(node) =>
+                context.log.debug(s"Root tablet located at $node")
+                rootClaim match {
+                  case Some(pen) =>
+                    pen.setData(node.uid.getBytes("UTF-8"))
+                  case None =>
+                    val pen =
+                      new PersistentNode(zookeeper, CreateMode.EPHEMERAL, false, "/root", node.uid.getBytes("UTF-8"))
+                    pen.start()
+                    rootClaim = Some(pen)
+                }
               case None =>
-                val pen =
-                  new PersistentNode(zookeeper, CreateMode.EPHEMERAL, false, "/root", node.uid.getBytes("UTF-8"))
-                pen.start()
-                rootClaim = Some(pen)
+                context.log.debug("Unclaiming root tablet")
+                rootClaim.foreach { pen =>
+                  pen.close()
+                  rootClaim = None
+                }
             }
-
             Behaviors.same
           case Disconnected => throw new IllegalStateException("ZooKeeper has disconnected")
           case _            => throw new IllegalStateException()

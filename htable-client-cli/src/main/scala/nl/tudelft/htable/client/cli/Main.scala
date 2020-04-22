@@ -157,7 +157,7 @@ object Main {
         }
         Future.successful(Done)
       case Some(conf.help) =>
-        conf.printHelp()
+        conf
         Future.successful(Done)
       case _ =>
         conf.printHelp()

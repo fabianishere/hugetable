@@ -9,6 +9,7 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.{ByteString, ByteStringBuilder}
 import nl.tudelft.htable.client.HTableInternalClient
+import nl.tudelft.htable.client.impl.MetaHelpers
 import nl.tudelft.htable.core._
 
 import scala.concurrent.{ExecutionContext, Promise}
@@ -100,14 +101,8 @@ object AdminActor {
         // We create a table by adding an entry for the table to the METADATA table
         // After we invalidate the current tablet distribution, it will automatically be detected by the load balancer
         // and assigned to some node which will actually create the table on disk.
-        val time = System.currentTimeMillis()
-        val mutation = RowMutation("METADATA", ByteString(table))
-          .put(RowCell(ByteString("table"), time, ByteString(table)))
-          .put(RowCell(ByteString("start-key"), time, ByteString.empty))
-          .put(RowCell(ByteString("end-key"), time, ByteString.empty))
-          .put(RowCell(ByteString("state"), time, ByteString(TabletState.Unassigned.id)))
-          .put(RowCell(ByteString("id"), time, new ByteStringBuilder().putInt(0)(ByteOrder.LITTLE_ENDIAN).result()))
-
+        val tablet = Tablet(table, RowRange.unbounded, 0)
+        val mutation = MetaHelpers.writeNew(tablet, TabletState.Unassigned, None)
         client
           .mutate(mutation)
           .onComplete { res =>

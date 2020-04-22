@@ -36,7 +36,7 @@ private[htable] object MetaHelpers {
    * @param state The state of the tablet.
    * @param node The node on which the tablet should be hosted.
    */
-  def writeRow(tablet: Tablet, state: TabletState, node: Option[Node]): RowMutation = {
+  def writeNew(tablet: Tablet, state: TabletState, node: Option[Node]): RowMutation = {
     val time = System.currentTimeMillis()
     val key = ByteString(tablet.table) ++ tablet.range.start
     val mutation = RowMutation("METADATA", key)
@@ -45,6 +45,25 @@ private[htable] object MetaHelpers {
       .put(RowCell(ByteString("end-key"), time, tablet.range.end))
       .put(RowCell(ByteString("state"), time, ByteString(state.id)))
       .put(RowCell(ByteString("id"), time, new ByteStringBuilder().putInt(tablet.id)(ByteOrder.LITTLE_ENDIAN).result()))
+
+    node match {
+      case Some(value) => mutation.put(RowCell(ByteString("node"), time, ByteString(value.uid)))
+      case None        => mutation
+    }
+  }
+
+  /**
+   * Write a row to the METADATA table based on its previous values.
+   *
+   * @param tablet The tablet to write.
+   * @param state The state of the tablet.
+   * @param node The node on which the tablet should be hosted.
+   */
+  def writeExisting(tablet: Tablet, state: TabletState, node: Option[Node]): RowMutation = {
+    val time = System.currentTimeMillis()
+    val key = ByteString(tablet.table) ++ tablet.range.start
+    val mutation = RowMutation("METADATA", key)
+      .put(RowCell(ByteString("state"), time, ByteString(state.id)))
 
     node match {
       case Some(value) => mutation.put(RowCell(ByteString("node"), time, ByteString(value.uid)))
