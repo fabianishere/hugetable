@@ -81,7 +81,6 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
           else
             Iterator(Row(ByteString(result.getRow), result.listCells().asScala.map(fromHBase).toSeq))
         case core.Scan(_, range, reversed) =>
-          region.startRegionOperation(Region.Operation.SCAN)
           // Note that the start/end row are also reversed when we scan in reverse order due
           // to HBase behavior
           val startRow = if (reversed) range.end.toArray else range.start.toArray
@@ -105,10 +104,16 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
 
             override def next(): Option[Row] = {
               cells.clear()
-              more = scanner.nextRaw(cells)
 
-              if (!more) {
-                region.closeRegionOperation(Region.Operation.SCAN)
+              region.startRegionOperation(Region.Operation.SCAN)
+              try {
+                more = scanner.nextRaw(cells)
+              } finally {
+                try {
+                  region.closeRegionOperation(Region.Operation.SCAN)
+                } catch {
+                  case _: IllegalMonitorStateException => // XXX We ignore lock failures for now
+                }
               }
 
               val scalaCells = cells.asScala
