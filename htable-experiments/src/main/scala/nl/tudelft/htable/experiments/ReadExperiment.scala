@@ -10,7 +10,8 @@ import org.apache.curator.retry.ExponentialBackoffRetry
 import org.rogach.scallop.{ScallopConf, ScallopOption}
 
 import scala.collection.Seq
-import scala.concurrent.ExecutionContextExecutor
+import scala.concurrent.{Await, ExecutionContextExecutor}
+import scala.concurrent.duration._
 
 /**
  * Main class of the HugeTable server program.
@@ -49,14 +50,17 @@ object ReadExperiment {
     for (i <- 0 until max) {
       val scan: Scan = Scan("Test", RowRange(ByteString("TestRow"), ByteString("TestRow")))
       val result = client.read(scan)
+        .runForeach(printRow)
+      Await.result(result, 100.seconds)
       if ((i % 1000) == 0) {
         val end = System.currentTimeMillis()
         val avg = 1000.0 / ((end - start) / 1000.0)
         start = System.currentTimeMillis()
         System.out.println("At " + i + " requests total avg p/s: " + avg)
-        result.runForeach(printRow)
       }
     }
+
+    stop()
   }
 
   /**

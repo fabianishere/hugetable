@@ -50,7 +50,7 @@ object WriteExperiment {
     for (i <- 0 until max) {
       val value = "a" * 1000 // We write 1000 byte values per request (same as big table paper)
       val time = System.currentTimeMillis()
-      val mutation: RowMutation = RowMutation("Test", ByteString("TestRow"))
+      val mutation: RowMutation = RowMutation("test", ByteString("TestRow"))
       mutation.put(RowCell(ByteString("row_" + i), time, ByteString(value)))
       val result = client.mutate(mutation)
       Await.result(result, 100.seconds)
@@ -61,6 +61,8 @@ object WriteExperiment {
         System.out.println("At " + i + " requests total avg p/s: " + avg)
       }
     }
+
+    stop()
   }
 
   /**
