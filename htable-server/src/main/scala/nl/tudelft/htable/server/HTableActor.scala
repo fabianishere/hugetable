@@ -175,7 +175,7 @@ object HTableActor {
             loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet, shouldInvalidate)
             Behaviors.same
           case NodeEvent(NodeActor.Serving(tabletsAdded, tabletsRemoved)) =>
-            context.log.debug(s"Node $self has been assigned new tablets [added=$tabletsAdded, removed=$tabletsRemoved]")
+            context.log.debug(s"$self has been assigned new tablets [added=$tabletsAdded, removed=$tabletsRemoved]")
             if (tabletsAdded.exists(Tablet.isRoot)) {
               zk ! ZooKeeperActor.SetRoot(Some(self))
             } else if (tabletsRemoved.exists(Tablet.isRoot)) {

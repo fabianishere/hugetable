@@ -52,6 +52,7 @@ class HBaseStorageDriver(val node: Node, val fs: FileSystem) extends StorageDriv
 
     var info = RegionInfoBuilder
       .newBuilder(tableName)
+      .setReplicaId(0)
       .setRegionId(tablet.id)
       .setStartKey(tablet.range.start.toArray)
       .setEndKey(tablet.range.end.toArray)
@@ -62,7 +63,7 @@ class HBaseStorageDriver(val node: Node, val fs: FileSystem) extends StorageDriv
     // Load persisted region info from disk if possible
     val regionDir = FSUtils.getRegionDirFromRootDir(rootDir, info)
     if (open && fs.exists(new Path(regionDir, HRegionFileSystem.REGION_INFO_FILE))) {
-      logger.debug(s"Reopening tablet $tablet: .regioninfo exists on filesystem")
+      logger.info(s"Reopening tablet $tablet: .regioninfo exists on filesystem")
       info = HRegionFileSystem.loadRegionInfoFileContent(fs, regionDir)
     }
 

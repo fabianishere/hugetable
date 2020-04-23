@@ -13,8 +13,8 @@ class RoundRobinLoadBalancerPolicy extends LoadBalancerPolicy {
    */
   private var nodes: Iterator[Node] = Iterator.empty
 
-  override def startCycle(currentAssignments: Map[Node, Set[Tablet]]): Unit = {
-    this.nodes = Iterator.continually(currentAssignments.keys).flatten
+  override def startCycle(nodes: Set[Node]): Unit = {
+    this.nodes = Iterator.continually(nodes).flatten
   }
 
   override def select(tablet: Tablet): Node = nodes.next()

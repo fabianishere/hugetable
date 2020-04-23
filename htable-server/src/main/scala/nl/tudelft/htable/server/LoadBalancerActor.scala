@@ -2,17 +2,17 @@ package nl.tudelft.htable.server
 
 import akka.Done
 import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.{ActorRef, Behavior, DispatcherSelector}
+import akka.actor.typed.{Behavior, DispatcherSelector}
 import akka.stream.Materializer
 import akka.stream.typed.scaladsl.ActorSink
-import akka.util.{ByteString, ByteStringBuilder, Timeout}
+import akka.util.{ByteString, Timeout}
 import nl.tudelft.htable.client.HTableInternalClient
 import nl.tudelft.htable.client.impl.MetaHelpers
 import nl.tudelft.htable.core._
 
 import scala.collection.mutable
-import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
+import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success}
 
 /**
@@ -40,9 +40,25 @@ object LoadBalancerActor {
    */
   private final case class NodeFailure(node: Node, failure: Throwable) extends Command
 
+  /**
+   * Received when we receive a row from a node.
+   */
   private case class NodeRow(node: Node, row: Row) extends Command
 
+  /**
+   * Received when we receive all rows from a node.
+   */
   private case class NodeComplete(node: Node) extends Command
+
+  /**
+   * Received when the assignment phase failed.
+   */
+  private case class AssignFailed(failure: Throwable) extends Command
+
+  /**
+   * Received when the assignment phase succeeded.
+   */
+  private case object AssignSucceeded extends Command
 
   /**
    * Construct the behavior for the load balancer.
@@ -101,13 +117,13 @@ object LoadBalancerActor {
         responses(node) = tablets
 
         if (responses.size == nodes.size)
-          reconstruct(client, policy, responses, shouldInvalidate)
+          reconstruct(client, policy, nodes, responses.find(_._2.exists(Tablet.isRoot)).map(_._1), shouldInvalidate)
         else
           Behaviors.same
       case NodeFailure(node, _) =>
         responses(node) = Set.empty
         if (responses.size == nodes.size)
-          reconstruct(client, policy, responses, shouldInvalidate)
+          reconstruct(client, policy, nodes, responses.find(_._2.exists(Tablet.isRoot)).map(_._1), shouldInvalidate)
         else
           Behaviors.same
       case Schedule(nodes, shouldInvalidate) => running(client, policy, nodes, shouldInvalidate)
@@ -116,50 +132,45 @@ object LoadBalancerActor {
 
   /**
    * Construct the behavior for reconstructing the metadata table over the nodes.
+   *
+   * @param client The client to communicate with the other nodes.
+   * @param policy The load balancing policy.
+   * @param nodes The set of nodes that may be included in the scheduling cycle.
+   * @param shouldInvalidate A flag to indicate whether we should reassign all tablets.
    */
   private def reconstruct(client: HTableInternalClient,
                           policy: LoadBalancerPolicy,
-                          tablets: mutable.HashMap[Node, Set[Tablet]],
+                          nodes: Set[Node],
+                          root: Option[Node],
                           shouldInvalidate: Boolean): Behavior[Command] = Behaviors.setup { context =>
     implicit val timeout: Timeout = 3.seconds
     implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.blocking())
     implicit val mat: Materializer = Materializer(context.system)
 
-    context.log.debug("Gathering all known tablets")
-
-    val queuedTablets = mutable.TreeSet[Tablet]() // The tablets to be possibly (re-)assigned
-    val queriedNodes = mutable.HashSet[Node]() // Nodes that have been queried
-    val newAssignment = mutable.TreeMap[Tablet, Node]()
-
-    // Map all nodes to their unique identifiers
-    val uidToNode = tablets.keys.map(node => (node.uid, node)).toMap
+    context.log.debug("Scanning METADATA table")
 
     // Start load balancing cycle
-    policy.startCycle(tablets.toMap)
+    policy.startCycle(nodes)
 
-    // Make sure the root tablet is up and if not, select a node to host the tablet.
-    val rootNode = tablets.find(_._2.exists(Tablet.isRoot)) match {
-      case Some((node, _)) => node
+    // Map all nodes to their unique identifiers
+    val uidToNode = nodes.map(node => (node.uid, node)).toMap
+
+    // If no one (active) is currently hosting the root METADATA tablet, make sure that we assign
+    val rootNode = root match {
+      case Some(node) =>
+        node
       case None =>
         val selectedNode = policy.select(Tablet.root)
-        context.log.debug(s"Assigning tablet root to $selectedNode")
-        // Make sure we also assign the tablet
-        val nodeAssignment = tablets.updateWith(selectedNode) { v => Some(v.getOrElse(Set.empty) + Tablet.root) }
-        client.assign(selectedNode, nodeAssignment.get)
+        context.log.debug(s"Assigning root METADATA tablet to $selectedNode")
+        client.assign(selectedNode, Set(Tablet.root), AssignType.Add)
         selectedNode
     }
 
-    // Clear the current assignments
-    if (shouldInvalidate) {
-      context.log.debug("Clearing all current assignments")
-      tablets.foreach { case (node, tablets) => client.assign(node, tablets.filter(Tablet.isRoot)) }
-      tablets.clear()
-      // XXX Currently, the root METADATA tablet is fixed to a single node (in the absence of failures)
-      tablets(rootNode) = Set(Tablet.root)
-    }
+    val previousAssignments = mutable.TreeMap[Tablet, Option[Node]]()
+    val newAssignments = mutable.TreeMap[Tablet, Node]()
 
-    // In case we keep the old assignments, add them to our assignment mapping
-    tablets.foreach { case (node, assignments) => assignments.foreach(tablet => newAssignment(tablet) = node) }
+    val queue = mutable.ArrayDeque[Tablet]()
+    val queriedNodes = mutable.HashSet[Node]() // Nodes that have been queried
 
     // Query the root node
     query(rootNode)
@@ -168,6 +179,7 @@ object LoadBalancerActor {
      * Query the specified [Node] for the metadata table.
      */
     def query(node: Node): Unit = {
+      context.log.debug(s"Querying $node for METADATA")
       queriedNodes += node
       val sink = ActorSink.actorRef[Command](context.self,
                                              onCompleteMessage = NodeComplete(node),
@@ -179,107 +191,78 @@ object LoadBalancerActor {
     }
 
     /**
-     * Assign the specified [tablet] to the specified [node].
-     */
-    def assign(tablet: Tablet, node: Node, shouldUpdateMeta: Boolean = true, isNew: Boolean = false): Unit = {
-      // Note that this operation must always return some Seq value
-      val assignments = tablets
-        .updateWith(node) { tablets => Some(tablets.getOrElse(Set.empty) + tablet) }
-        .get
-
-      // Update metadata tablet to reflect the assignment
-      val key = ByteString(tablet.table) ++ tablet.range.start
-      val mutation =
-        if (isNew)
-          MetaHelpers.writeNew(tablet, TabletState.Served, Some(node))
-        else
-          MetaHelpers.writeExisting(tablet, TabletState.Served, Some(node))
-
-      val metaNode =
-        if (Tablet.isRoot(tablet))
-          node
-        else
-          newAssignment.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
-
-
-      context.log.debug(s"Assigning $tablet to $node [$assignments]")
-      // Assign the tablet to the chosen node
-      client.assign(node, assignments)
-        .andThen { _ =>
-          if (shouldUpdateMeta) {
-            context.log.debug(s"Asking $metaNode to update METADATA tablet")
-            client.mutate(metaNode, mutation)
-          } else {
-            Some(Done)
-          }
-        }
-        .onComplete {
-          case Failure(exception) =>
-            context.log.error("Failed to assign tablet to node", exception)
-          case Success(res) =>
-            context.log.debug(s"Successfully assigned $tablet to $node: $res")
-        }
-    }
-
-    /**
      * Process the specified queue by querying the relevant nodes for the meta tablet or assigning the tablets and
      * then performing a query.
      */
-    def processQueue(queue: mutable.TreeSet[Tablet]): Unit = {
-      for (tablet <- queue) {
-        val node = newAssignment.get(tablet) match {
-          case Some(value) => value
-          case None =>
-            val node = policy.select(tablet)
+    def processQueue(): Unit = {
+      while (queue.nonEmpty) {
+        val tablet = queue.removeHead()
+        if (Tablet.isRoot(tablet)) {
+          // We handle the root METADATA tablet in a special manner: we need to assign the root node before we are able
+          // to find its bounds.
+          newAssignments(tablet) = rootNode
 
-            assign(tablet, node)
-            newAssignment(tablet) = node
-            node
-        }
+          context.log.trace(s"Skipping query on $tablet: already queried")
+        } else if (Tablet.isMeta(tablet)) {
+          // For other METADATA tablets, find out whether it is currently assigned (and if not assign it to some node)
+          // and query its rows.
+          val node = previousAssignments(tablet) match {
+            case Some(value) => value
+            case None =>
+              val node = policy.select(tablet)
+              context.log.debug(s"Assigning $tablet to $node")
+              client.assign(node, Set(tablet), AssignType.Add)
+              newAssignments(tablet) = node
+              node
+          }
 
-        queue -= tablet
-
-        if (Tablet.isMeta(tablet) && !queriedNodes.contains(node)) {
-          query(node)
+          if (!queriedNodes.contains(node)) {
+            query(node)
+          } else {
+            context.log.trace(s"Skipping query on $tablet: already queried")
+          }
+        } else {
+          context.log.trace(s"Skipping query on $tablet: not METADATA")
         }
       }
     }
 
     Behaviors.receiveMessagePartial {
-      case Schedule(nodes, shouldInvalidate) => running(client, policy, nodes, shouldInvalidate)
+      case Schedule(nodes, shouldInvalidate) =>
+        policy.endCycle()
+        running(client, policy, nodes, shouldInvalidate)
       case NodeRow(_, row) =>
-        context.log.debug(s"Received row $row")
+        context.log.trace(s"Received row $row")
         MetaHelpers.readRow(row) match {
           case Some((tablet, state, uid)) =>
-            context.log.debug(s"Found $tablet $state $uid")
+            val node = uid.flatMap(uidToNode.get)
 
-            // Update the assignments
-            uid.flatMap(uidToNode.get).foreach { node =>
-              tablets
-                .updateWith(node) { tablets => Some(tablets.map(_ + tablet).getOrElse(Set.empty)) }
-            }
+            context.log.debug(s"Discovered $tablet $state on $node")
+
             if (state != TabletState.Closed) {
-              queuedTablets += tablet
+              previousAssignments.put(tablet, node)
+              queue += tablet
             }
           case None =>
             context.log.error(s"Failed to parse meta row $row")
         }
         Behaviors.same
       case NodeComplete(node) =>
-        if (queuedTablets.isEmpty && node == rootNode) {
-          context.log.info(s"$node tablet is empty. Initializing METADATA")
+        if (queue.isEmpty && node == rootNode) {
+          context.log.info(s"Discovered no tablets on $node: Initializing METADATA")
           // If the root node does not contain any rows, it means that the METADATA table is not populated. Therefore,
           // we initialize it here.
-          assign(Tablet.root, rootNode, isNew = true)
+          updateMeta(client, rootNode, Tablet.root, rootNode, isNew = true)
+          policy.endCycle()
           idle(client, policy)
         } else {
-          context.log.debug(s"Queued ${queuedTablets.size} METADATA rows")
-          processQueue(queuedTablets)
+          context.log.debug(s"Queued ${queue.size} METADATA rows")
+          processQueue()
 
-          if (queuedTablets.isEmpty) {
-            policy.endCycle()
-            idle(client, policy)
+          if (queue.isEmpty) {
+            assign(client, policy, previousAssignments, newAssignments, shouldInvalidate)
           } else {
+            context.log.trace(s"Queue is not yet empty: wait")
             Behaviors.same
           }
         }
@@ -288,5 +271,93 @@ object LoadBalancerActor {
         policy.endCycle()
         idle(client, policy)
     }
+  }
+
+  /**
+   * Construct the behavior for assigning the tablets to the nodes.
+   *
+   * @param client The client to communicate with the other nodes.
+   * @param policy The load balancing policy.
+   * @param previousAssignments The previous assignments used.
+   * @param newAssignments The assignments that were already done for METADATA tablets.
+   * @param shouldInvalidate A flag to indicate whether we should reassign all tablets.
+   */
+  private def assign(client: HTableInternalClient,
+                     policy: LoadBalancerPolicy,
+                     previousAssignments: mutable.TreeMap[Tablet, Option[Node]],
+                     newAssignments: mutable.TreeMap[Tablet, Node],
+                     shouldInvalidate: Boolean): Behavior[Command] = Behaviors.setup { context =>
+    implicit val timeout: Timeout = 3.seconds
+    implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.blocking())
+
+    val n = previousAssignments.count(p => if (shouldInvalidate) true else p._2.isDefined)
+    context.log.debug(s"Assigning $n tablets")
+
+    // Aggregate the tablets by the node they are currently assigned to and report this to the load balancing policy
+    val previousNodeTablets = previousAssignments
+      .flatMap { case (tablet, node) => node.map(node => (tablet, node)) }
+      .groupMapReduce(_._2)(p => Set(p._1))(_ ++ _)
+    policy.discover(previousNodeTablets)
+
+    // Assign each tablet to a node
+    for ((tablet, nodeOpt) <- previousAssignments if !newAssignments.contains(tablet)) {
+      val node = nodeOpt.filter(_ => !shouldInvalidate).getOrElse(policy.select(tablet))
+      newAssignments(tablet) = node
+    }
+
+    // Obtain the new node assignments and inform the nodes
+    val futures = newAssignments
+      .groupMapReduce(_._2)(p => Set(p._1))(_ ++ _)
+      .map { case (node, tablets) =>
+        client.assign(node, tablets).flatMap { _ =>
+          val futures = tablets.map { tablet =>
+            // Update metadata tablet to reflect the assignment
+            val key = ByteString(tablet.table) ++ tablet.range.start
+            val metaNode =
+              if (Tablet.isRoot(tablet))
+                node
+              else
+                newAssignments.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
+            updateMeta(client, metaNode, tablet, node)
+          }
+          Future.sequence(futures)
+        }
+      }
+    context.pipeToSelf(Future.sequence(futures)) {
+      case Failure(exception) => AssignFailed(exception)
+      case Success(_) => AssignSucceeded
+    }
+
+    Behaviors.receiveMessagePartial {
+      case Schedule(nodes, shouldInvalidate) =>
+        policy.endCycle()
+        running(client, policy, nodes, shouldInvalidate)
+      case AssignSucceeded =>
+        context.log.info("Scheduling cycle completed")
+        policy.endCycle()
+        idle(client, policy)
+      case AssignFailed(exception) =>
+        context.log.error("Assignment phase failed", exception)
+        policy.endCycle()
+        idle(client, policy)
+    }
+  }
+
+  /**
+   * Update the METADATA table for the specified tablet.
+   */
+  private def updateMeta(client: HTableInternalClient,
+                         metaNode: Node,
+                         tablet: Tablet,
+                         node: Node,
+                         isNew: Boolean = false): Future[Done] = {
+    val mutation =
+      if (isNew)
+        MetaHelpers.writeNew(tablet, TabletState.Served, Some(node))
+      else
+        MetaHelpers.writeExisting(tablet, TabletState.Served, Some(node))
+
+    // Assign the tablet to the chosen node
+    client.mutate(metaNode, mutation)
   }
 }

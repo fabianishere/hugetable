@@ -101,7 +101,6 @@ abstract class AbstractIntegrationTest {
     Assertions.assertEquals("test", tablet.table, "The first row is the METADATA table")
     Assertions.assertEquals(TabletState.Served, state, "The test tablet is served")
     Assertions.assertTrue(uid.isDefined, "The test tablet must be located on some node")
-    println(s"$tablet $uid")
 
     probe.expectComplete()
   }
@@ -309,6 +308,7 @@ abstract class AbstractIntegrationTest {
   @Order(13)
   @DisplayName("scan works after invalidation")
   def testScanAfterInvalidate(): Unit = {
+    Thread.sleep(2000)
     testSplitUpdateMetadata()
     testSplitScan()
   }

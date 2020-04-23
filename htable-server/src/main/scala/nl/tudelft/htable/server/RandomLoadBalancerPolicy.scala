@@ -14,8 +14,8 @@ class RandomLoadBalancerPolicy extends LoadBalancerPolicy {
    */
   private var nodes: collection.Seq[Node] = Seq.empty
 
-  override def startCycle(currentAssignments: Map[Node, Set[Tablet]]): Unit = {
-    this.nodes = currentAssignments.keys.toSeq
+  override def startCycle(nodes: Set[Node]): Unit = {
+    this.nodes = nodes.toSeq
   }
 
   /**

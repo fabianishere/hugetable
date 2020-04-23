@@ -7,6 +7,7 @@ import akka.util.ByteString
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.client.HTableInternalClient
 import nl.tudelft.htable.client.impl.MetaHelpers
+import nl.tudelft.htable.core.AssignType.AssignType
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.{StorageDriverProvider, TabletDriver}
 
@@ -42,7 +43,7 @@ object NodeActor {
   /**
    * Message sent to a node to assign it a set of tablets.
    */
-  final case class Assign(tablets: Seq[Tablet], promise: Promise[Done]) extends Command
+  final case class Assign(tablets: Seq[Tablet], assignType: AssignType, promise: Promise[Done]) extends Command
 
   /**
    * Read the following query from the node.
@@ -99,7 +100,7 @@ object NodeActor {
         context.log.warn("Reporting disabled node")
         promise.success(Seq.empty)
         Behaviors.same
-      case Assign(_, promise) =>
+      case Assign(_, _, promise) =>
         context.log.warn("Assigning on disabled node")
         promise.failure(new IllegalStateException(s"Node endpoint not enabled for node $self"))
         Behaviors.same
@@ -151,10 +152,14 @@ object NodeActor {
           case Report(promise) =>
             promise.success(tables.flatMap(_._2.values).map(_.tablet).toSeq)
             Behaviors.same
-          case Assign(newTablets, promise) =>
+          case Assign(newTablets, assignType, promise) =>
             val currentTablets = tables.flatMap(_._2.values).map(_.tablet).toSet
             val newTabletsSet = newTablets.toSet
-            val removeTablets = currentTablets.diff(newTabletsSet)
+            val removeTablets =
+              if (assignType == AssignType.Set)
+                currentTablets.diff(newTabletsSet)
+              else
+                Set.empty[Tablet]
             val addTablets = newTabletsSet.diff(currentTablets)
 
             // Remove tablets

@@ -1,7 +1,8 @@
 package nl.tudelft.htable.client
 
 import akka.Done
-import nl.tudelft.htable.core.{Node, Tablet}
+import nl.tudelft.htable.core.AssignType.AssignType
+import nl.tudelft.htable.core.{AssignType, Node, Tablet}
 
 import scala.concurrent.Future
 
@@ -14,6 +15,11 @@ private[htable] trait HTableInternalClient extends HTableClient {
    * Obtain the master node of the cluster.
    */
   def master: Node
+
+  /**
+   * Obtain the node containing the root tablet.
+   */
+  def root: Option[Node]
 
   /**
    * Ping the specified node.
@@ -34,6 +40,7 @@ private[htable] trait HTableInternalClient extends HTableClient {
    *
    * @param node The node to assign the tablets to.
    * @param tablets The tablets to assign to the node.
+   * @param assignType The way to assign the tablets.
    */
-  def assign(node: Node, tablets: Set[Tablet]): Future[Done]
+  def assign(node: Node, tablets: Set[Tablet], assignType: AssignType = AssignType.Set): Future[Done]
 }

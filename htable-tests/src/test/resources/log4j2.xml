@@ -12,6 +12,9 @@
         <Logger name="org.apache.hadoop" level="error" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>
+        <Logger name="org.apache.hadoop.hbase" level="error" additivity="false">
+            <AppenderRef ref="Console"/>
+        </Logger>
         <Logger name="org.apache.curator" level="error" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>

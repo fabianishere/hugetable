@@ -12,8 +12,8 @@ class MinTabletsLoadBalancerPolicy extends LoadBalancerPolicy {
    */
   val assignments = new mutable.HashMap[Node, Int]
 
-  override def startCycle(currentAssignments: Map[Node, Set[Tablet]]): Unit = {
-    assignments.addAll(currentAssignments.map { case (node, tablets) => (node, tablets.size) })
+  override def startCycle(nodes: Set[Node]): Unit = {
+    assignments.addAll(nodes.map { node => (node, 1) })
   }
 
   override def select(tablet: Tablet): Node = {

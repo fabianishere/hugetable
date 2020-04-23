@@ -119,6 +119,11 @@ class ServerServiceResolver(val self: Node,
     /**
      * Assign the specified tablets to the node.
      */
-    override def assign(in: AssignRequest): Future[AssignResponse] = internalService.assign(in)
+    override def setTablets(in: SetTabletsRequest): Future[SetTabletsResponse] = internalService.setTablets(in)
+
+    /**
+     * Assign the specified tablets to the node.
+     */
+    override def addTablets(in: AddTabletsRequest): Future[AddTabletsResponse] = internalService.addTablets(in)
   }
 }

@@ -31,18 +31,32 @@ message ReportResponse {
     repeated Tablet tablets = 1;
 }
 
-// Request message for [InternalService.Assign]
-message AssignRequest {
+// Request message for [InternalService.SetTablets]
+message SetTabletsRequest {
     option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalRequest";
 
     // The tablets that the node is assigned.
     repeated Tablet tablets = 1;
 }
 
-// Response message for [InternalService.Assign].
-message AssignResponse {
+// Response message for [InternalService.SetTablets].
+message SetTabletsResponse {
     option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalResponse";
 }
+
+// Request message for [InternalService.AddTablets]
+message AddTabletsRequest {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalRequest";
+
+    // The tablets that the node is assigned.
+    repeated Tablet tablets = 1;
+}
+
+// Response message for [InternalService.AddTablets].
+message AddTabletsResponse {
+    option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalResponse";
+}
+
 
 // Request message for [InternalService.Split]
 message SplitRequest {
@@ -68,7 +82,10 @@ service InternalService {
     rpc Report (ReportRequest) returns (ReportResponse) {}
 
     // Assign the specified tablets to the node.
-    rpc Assign (AssignRequest) returns (AssignResponse) {}
+    rpc SetTablets (SetTabletsRequest) returns (SetTabletsResponse) {}
+
+    // Add the specified tablets to the node.
+    rpc AddTablets (AddTabletsRequest) returns (AddTabletsResponse) {}
 
     // Split the specified tablet that is residing on the node.
     rpc Split (SplitRequest) returns (SplitResponse) {}
