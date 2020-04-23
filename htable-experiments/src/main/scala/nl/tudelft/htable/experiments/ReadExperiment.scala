@@ -48,7 +48,7 @@ object ReadExperiment {
     val max = 100000000
     var start = System.currentTimeMillis()
     for (i <- 0 until max) {
-      val scan: Scan = Scan("test", RowRange(ByteString("TestRow"), ByteString("TestRow")))
+      val scan: Scan = Scan("test", RowRange.prefix(ByteString("row_" + i)))
       val result = client.read(scan)
         .runForeach(printRow)
       Await.result(result, 100.seconds)

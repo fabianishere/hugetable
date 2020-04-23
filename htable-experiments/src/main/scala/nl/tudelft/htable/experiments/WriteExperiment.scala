@@ -45,13 +45,14 @@ object WriteExperiment {
       sys.terminate()
     }
 
+    val col = ByteString("column")
+    val value = ByteString("a" * 1000) // We write 1000 byte values per request (same as big table paper)
     val max = 100000000
     var start = System.currentTimeMillis()
     for (i <- 0 until max) {
-      val value = "a" * 1000 // We write 1000 byte values per request (same as big table paper)
       val time = System.currentTimeMillis()
-      val mutation: RowMutation = RowMutation("test", ByteString("TestRow"))
-      mutation.put(RowCell(ByteString("row_" + i), time, ByteString(value)))
+      val mutation: RowMutation = RowMutation("test", ByteString("row_" + i))
+        .put(RowCell(col, time, value))
       val result = client.mutate(mutation)
       Await.result(result, 100.seconds)
       if ((i % 1000) == 0) {
