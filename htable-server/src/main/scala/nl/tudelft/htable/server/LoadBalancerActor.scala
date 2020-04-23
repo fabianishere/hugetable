@@ -253,6 +253,8 @@ object LoadBalancerActor {
           // If the root node does not contain any rows, it means that the METADATA table is not populated. Therefore,
           // we initialize it here.
           updateMeta(client, rootNode, Tablet.root, rootNode, isNew = true)
+
+          context.log.info("Scheduling cycle completed")
           policy.endCycle()
           idle(client, policy)
         } else {
