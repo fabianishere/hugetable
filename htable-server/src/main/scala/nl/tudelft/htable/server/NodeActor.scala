@@ -168,7 +168,7 @@ object NodeActor {
             for (tablet <- addTablets) {
               context.log.info(s"SPAWN: $tablet on $self")
               val tablets = tables.getOrElseUpdate(tablet.table, new mutable.TreeMap[ByteString, TabletDriver]()(Order.keyOrdering))
-              tablets.put(tablet.range.start, storageDriver.createTablet(tablet))
+              tablets.put(tablet.range.start, storageDriver.openTablet(tablet))
             }
 
             // Inform root actor if changes
@@ -179,12 +179,12 @@ object NodeActor {
             promise.success(Done)
             Behaviors.same
           case Read(query, promise) =>
-            context.log.debug(s"READ $query")
+            context.log.debug(s"READ: $query on $self")
             query match {
               case Get(table, key) =>
                 find(table, key) match {
                   case Some(driver) =>
-                    context.log.trace(s"READ: Asking $driver for $key in $table")
+                    context.log.trace(s"READ: Asking ${driver.tablet} for $key in $table")
                     promise.success(driver.read(query))
                   case None              =>
                     context.log.debug(s"READ: Unknown $key in $table")
@@ -215,11 +215,11 @@ object NodeActor {
             }
             Behaviors.same
           case Mutate(mutation, promise) =>
-            context.log.debug(s"MUTATE $mutation")
+            context.log.debug(s"MUTATE: $mutation on $self")
 
             find(mutation.table, mutation.key) match {
               case Some(driver) =>
-                context.log.trace(s"MUTATE: Asking $driver for ${mutation.key} in ${mutation.table}")
+                context.log.trace(s"MUTATE: Asking ${driver.tablet} for ${mutation.key} in ${mutation.table}")
                 promise.complete(Try { driver.mutate(mutation) }.map(_ => Done))
               case None =>
                 context.log.debug(s"MUTATE: Unknown ${mutation.key} in ${mutation.table}")
@@ -227,18 +227,18 @@ object NodeActor {
             }
             Behaviors.same
           case Split(tablet, splitKey, promise) =>
-            context.log.debug(s"SPLIT: $tablet at $splitKey")
+            context.log.debug(s"SPLIT: $tablet at $splitKey on $self")
             find(tablet.table, tablet.range.start) match {
               case Some(driver) =>
                 try {
-                  context.log.trace(s"SPLIT: Asking $driver for ${splitKey} in ${tablet.table}")
+                  context.log.trace(s"SPLIT: Asking ${driver.tablet} for ${splitKey} in ${tablet.table}")
 
                   val (left, right) = driver.split(splitKey)
                   promise.completeWith(for {
                     _ <- client.mutate(MetaHelpers.writeExisting(tablet, TabletState.Closed, None))
                     _ <- client.mutate(MetaHelpers.writeNew(left, TabletState.Unassigned, None))
                     _ <- client.mutate(MetaHelpers.writeNew(right, TabletState.Unassigned, None))
-                    _ <- client.invalidate(Seq(tablet, left, right))
+                    _ <- client.balance(Set(tablet, left, right))
                   } yield Done)
                 } catch {
                   case e: Throwable =>

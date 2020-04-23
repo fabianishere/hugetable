@@ -93,7 +93,7 @@ class ServerServiceResolver(val self: Node,
      */
     override def deleteTable(in: DeleteTableRequest): Future[DeleteTableResponse] = adminService.deleteTable(in)
 
-    override def invalidate(in: InvalidateRequest): Future[InvalidateResponse] = adminService.invalidate(in)
+    override def balance(in: BalanceRequest): Future[BalanceResponse] = adminService.balance(in)
   }
 
   private object InternalServiceClientImpl extends InternalServiceClient {

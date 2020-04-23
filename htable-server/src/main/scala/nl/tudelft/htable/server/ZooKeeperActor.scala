@@ -93,6 +93,7 @@ object ZooKeeperActor {
         }
         .receiveSignal {
           case (_, PostStop) =>
+            context.log.debug("Stopping ZooKeeper client")
             zookeeper.close()
             Behaviors.same
         }
@@ -125,7 +126,7 @@ object ZooKeeperActor {
       )
       leaderLatch.start()
 
-      // Claim root
+      // If we are hosting the root METADATA tablet, we claim the root node within ZooKeeper
       var rootClaim: Option[PersistentNode] = None
 
       Behaviors
@@ -156,8 +157,10 @@ object ZooKeeperActor {
         }
         .receiveSignal {
           case (_, PostStop) =>
+            context.log.debug("Stopping ZooKeeper client")
             leaderLatch.close()
             membership.close()
+            rootClaim.foreach(_.close())
             zookeeper.close()
             Behaviors.same
         }

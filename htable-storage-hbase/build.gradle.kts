@@ -14,5 +14,9 @@ dependencies {
         exclude(group = "org.slf4j", module = "slf4j-log4j12")
         exclude(group = "log4j")
     }
-    implementation("org.apache.hadoop:hadoop-client:3.1.3")
+    implementation("org.apache.hadoop:hadoop-client:3.1.3") {
+        exclude(group = "org.slf4j", module = "slf4j-log4j12")
+        exclude(group = "log4j")
+    }
+    runtimeOnly("org.slf4j:log4j-over-slf4j:${Library.SLF4J}")
 }

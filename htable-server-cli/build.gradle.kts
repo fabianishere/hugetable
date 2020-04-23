@@ -13,11 +13,13 @@ application {
 dependencies {
     implementation(project(":htable-server"))
     implementation("org.rogach:scallop_${Library.SCALA_LIB}:${Library.SCALLOP}")
-    runtimeOnly("org.slf4j:slf4j-simple:${Library.SLF4J}")
 
-    implementation("org.apache.hadoop:hadoop-client:3.0.3")
+    implementation("org.apache.hadoop:hadoop-client:3.0.3") {
+        exclude(group = "org.slf4j", module = "slf4j-log4j12")
+        exclude(group = "log4j")
+    }
     implementation(project(":htable-storage-hbase"))
-    implementation("org.apache.logging.log4j:log4j-slf4j18-impl:2.13.1")
-    implementation("org.apache.logging.log4j:log4j-jcl:2.13.1")
+    runtimeOnly("org.apache.logging.log4j:log4j-slf4j-impl:2.13.1")
+    runtimeOnly("org.apache.logging.log4j:log4j-jcl:2.13.1")
 }
 

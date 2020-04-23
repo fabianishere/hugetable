@@ -101,6 +101,7 @@ abstract class AbstractIntegrationTest {
     Assertions.assertEquals("test", tablet.table, "The first row is the METADATA table")
     Assertions.assertEquals(TabletState.Served, state, "The test tablet is served")
     Assertions.assertTrue(uid.isDefined, "The test tablet must be located on some node")
+    println(s"$tablet $uid")
 
     probe.expectComplete()
   }
@@ -294,7 +295,7 @@ abstract class AbstractIntegrationTest {
   @Order(12)
   @DisplayName("invalidate is successful")
   def testInvalidate(): Unit = {
-    val future = client.invalidate(Seq.empty)
+    val future = client.balance(Set.empty, shouldInvalidate = true)
     Await.result(future, 5.seconds)
 
     // Wait a few seconds before the change is propagated

@@ -148,8 +148,8 @@ object Main {
       case Some(conf.split) =>
         client
           .split(Tablet(conf.split.table(), RowRange.leftBounded(conf.split.startKey())), conf.split.splitKey())
-      case Some(conf.invalidate) =>
-        client.invalidate(List())
+      case Some(conf.balance) =>
+        client.balance(Set.empty, conf.balance.invalidate())
       case Some(conf.listServers) =>
         zookeeper.getChildren.forPath("/servers").asScala.foreach { node =>
           val address = deserializeAddress(zookeeper.getData.forPath(ZKPaths.makePath("/servers", node)))
@@ -330,10 +330,15 @@ object Main {
     addSubcommand(split)
 
     /**
-     * A command to invalidate the current assignments.
+     * A command to balance the current assignments.
      */
-    val invalidate = new Subcommand("invalidate")
-    addSubcommand(invalidate)
+    val balance = new Subcommand("balance") {
+      /**
+       * A flag to invalidate the entire assignment.
+       */
+      val invalidate = opt[Boolean](descr = "Invalidate the entire assigment", default = Some(false))
+    }
+    addSubcommand(balance)
 
     /**
      * A command to list the active servers.

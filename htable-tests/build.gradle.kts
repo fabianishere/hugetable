@@ -20,6 +20,6 @@ dependencies {
         exclude(group = "log4j")
     }
     testImplementation("com.typesafe.akka:akka-stream-testkit_${Library.SCALA_LIB}:${Library.AKKA}")
-    testImplementation("org.apache.logging.log4j:log4j-slf4j18-impl:2.13.1")
-    testImplementation("org.apache.logging.log4j:log4j-jcl:2.13.1")
+    testRuntimeOnly("org.apache.logging.log4j:log4j-slf4j-impl:2.13.1")
+    testRuntimeOnly("org.apache.logging.log4j:log4j-jcl:2.13.1")
 }

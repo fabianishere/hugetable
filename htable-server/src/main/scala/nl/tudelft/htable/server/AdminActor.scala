@@ -41,9 +41,9 @@ object AdminActor {
   final case class DeleteTable(name: String, promise: Promise[Done]) extends Command
 
   /**
-   * Request the server to invalidate the specified tablets..
+   * Request the server to invalidate the specified tablets.
    */
-  final case class Invalidate(tablets: Seq[Tablet], promise: Promise[Done]) extends Command
+  final case class Balance(tablets: Set[Tablet], shouldInvalidate: Boolean, promise: Promise[Done]) extends Command
 
   /**
    * Events emitted by this actor.
@@ -51,9 +51,9 @@ object AdminActor {
   sealed trait Event
 
   /**
-   * An event to indicate that the specified tablets have been invalidated.
+   * An event to indicate that the specified tablets should be refreshed.
    */
-  final case class Invalidated(tablets: Seq[Tablet]) extends Event
+  final case class Balanced(tablets: Set[Tablet], shouldInvalidate: Boolean = false) extends Event
 
   /**
    * Construct the behavior of the admin actor.
@@ -76,7 +76,7 @@ object AdminActor {
       case DeleteTable(_, promise) =>
         promise.failure(new IllegalStateException("Admin endpoint not enabled for node"))
         Behaviors.same
-      case Invalidate(_, promise) =>
+      case Balance(_, _, promise) =>
         promise.failure(new IllegalStateException("Admin endpoint not enabled for node"))
         Behaviors.same
     }
@@ -106,7 +106,7 @@ object AdminActor {
         client
           .mutate(mutation)
           .onComplete { res =>
-            listener ! Invalidated(Seq.empty)
+            client.balance(Set(tablet))
             promise.complete(res)
           }
         Behaviors.same
@@ -135,13 +135,13 @@ object AdminActor {
               if (res.isFailure) {
                 context.log.error("Failed to complete removal", res.failed.get)
               }
-              listener ! Invalidated(Seq.empty)
+              listener ! Balanced(Set.empty)
               promise.complete(res)
             }))
         }
         Behaviors.same
-      case Invalidate(tablets, promise) =>
-        listener ! Invalidated(tablets)
+      case Balance(tablets, shouldInvalidate, promise) =>
+        listener ! Balanced(tablets, shouldInvalidate)
         promise.success(Done)
         Behaviors.same
     }

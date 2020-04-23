@@ -168,14 +168,14 @@ object HTableActor {
             }
 
             Behaviors.same
-          case AdminEvent(AdminActor.Invalidated(_)) =>
-            context.log.info(s"Invalidating tablets")
-            assert(isMaster, "Non-masters should not be invalidated")
+          case AdminEvent(AdminActor.Balanced(_, shouldInvalidate)) =>
+            context.log.info(s"Rebalancing tablets [invalidate=$shouldInvalidate]")
+            assert(isMaster, "Non-masters cannot rebalance")
             // Start a load balancing cycle
-            loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet)
+            loadBalancer ! LoadBalancerActor.Schedule(nodes.toSet, shouldInvalidate)
             Behaviors.same
           case NodeEvent(NodeActor.Serving(tabletsAdded, tabletsRemoved)) =>
-            context.log.debug(s"Node has been assigned new tablets [added=$tabletsAdded, removed=$tabletsRemoved]")
+            context.log.debug(s"Node $self has been assigned new tablets [added=$tabletsAdded, removed=$tabletsRemoved]")
             if (tabletsAdded.exists(Tablet.isRoot)) {
               zk ! ZooKeeperActor.SetRoot(Some(self))
             } else if (tabletsRemoved.exists(Tablet.isRoot)) {

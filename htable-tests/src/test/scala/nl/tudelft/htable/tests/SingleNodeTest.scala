@@ -53,7 +53,8 @@ class SingleNodeTest extends AbstractIntegrationTest {
     client.close()
     server.terminate()
 
-    TestUtils.stopHDFS()
+    Thread.sleep(1000)
     TestUtils.stopZooKeeper()
+    TestUtils.stopHDFS()
   }
 }

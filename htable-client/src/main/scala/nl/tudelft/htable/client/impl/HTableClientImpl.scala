@@ -10,7 +10,7 @@ import akka.{Done, NotUsed}
 import nl.tudelft.htable.client.{HTableInternalClient, ServiceResolver}
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol.CoreAdapters
-import nl.tudelft.htable.protocol.admin.{CreateTableRequest, DeleteTableRequest, InvalidateRequest}
+import nl.tudelft.htable.protocol.admin.{BalanceRequest, CreateTableRequest, DeleteTableRequest, InvalidateRequest}
 import nl.tudelft.htable.protocol.client.{ClientServiceClient, MutateRequest, ReadRequest}
 import nl.tudelft.htable.protocol.internal.{AssignRequest, PingRequest, ReportRequest, SplitRequest}
 import org.apache.curator.framework.CuratorFramework
@@ -37,10 +37,10 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
 
   override def master: Node = resolveMaster()
 
-  override def invalidate(tablets: Seq[Tablet]): Future[Done] = {
+  override def balance(tablets: Set[Tablet], shouldInvalidate: Boolean): Future[Done] = {
     val node = resolveMaster()
     val client = resolver.openAdmin(node)
-    client.invalidate(InvalidateRequest(tablets)).map(_ => Done)
+    client.balance(BalanceRequest(tablets.toSeq, shouldInvalidate)).map(_ => Done)
   }
 
   override def create(name: String): Future[Done] = {
@@ -124,11 +124,9 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   }
 
   override def mutate(mutation: RowMutation): Future[Done] = {
-    resolve(Tablet(mutation.table, RowRange(mutation.key, mutation.key ++ ByteString(9))))
+    resolve(Tablet(mutation.table, RowRange(mutation.key, mutation.key ++ ByteString(0))))
       .via(new RequireOne(() => new IllegalArgumentException(s"Table ${mutation.table} not found")))
-      .flatMapConcat {
-        case (node, _) => Source.future(mutate(node, mutation))
-      }
+      .flatMapConcat { case (node, tablet) => Source.future(mutate(node, mutation)) }
       .runForeach(_ => ())
   }
 
@@ -187,9 +185,9 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
                 val metaRight = metaTablet.range.end.drop(tablet.table.length)
                 right = Order.keyOrdering.min(metaRight, right)
               }
-              RowRange.rightBounded(right)
+              RowRange(tablet.range.start, right)
             } else {
-              RowRange.unbounded
+              tablet.range
             }
 
           scanMeta(metaClient, Tablet(tablet.table, range))
@@ -214,18 +212,19 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
         RowRange(left, right)
       }
 
+
     // Our resolve procedure works as follows:
     // 1. Scan the metadata table from the end-key until the first matching start row occurs
     // 2. Verify whether this row is still part of the table we are looking for
     // 3. Reverse the rows
     // 5. Convert the METADATA rows into a stream of nodes and tablets
     read(Scan("METADATA", range, reversed = true), client)
-      // Take rows up until we find the first row which is outside our range (this is the first tablet)
-      .takeWhile(row => Order.keyOrdering.gteq(row.key, tablet.range.start), inclusive = true)
+      .mapConcat(row => parseMeta(row).map(Seq(_)).getOrElse(Seq()))
+      // Take rows up until we find the first row which is outside our range
+      .takeWhile { case (_, metaTablet) => !metaTablet.range.isRightBounded || Order.keyOrdering.gteq(metaTablet.range.end, tablet.range.start) }
       // Reverse the order of the cells
-      .fold(List.empty[Row])((acc: List[Row], curr: Row) => curr :: acc) // Reverse
-      .mapConcat[Row](identity)
-      .mapConcat[(Node, Tablet)](row => parseMeta(row).map(Seq(_)).getOrElse(Seq()))
+      .fold(List.empty[(Node, Tablet)])((acc: List[(Node, Tablet)], curr: (Node, Tablet)) => curr :: acc)
+      .mapConcat[(Node, Tablet)](identity)
   }
 
   /**

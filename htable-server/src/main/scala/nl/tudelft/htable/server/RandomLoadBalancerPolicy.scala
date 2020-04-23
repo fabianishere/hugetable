@@ -1,6 +1,7 @@
 package nl.tudelft.htable.server
 import nl.tudelft.htable.core.{Node, Tablet}
 
+import scala.collection.Set
 import scala.util.Random
 
 /**
@@ -13,8 +14,8 @@ class RandomLoadBalancerPolicy extends LoadBalancerPolicy {
    */
   private var nodes: collection.Seq[Node] = Seq.empty
 
-  override def startCycle(nodes: collection.Set[Node]): Unit = {
-    this.nodes = nodes.toSeq
+  override def startCycle(currentAssignments: Map[Node, Set[Tablet]]): Unit = {
+    this.nodes = currentAssignments.keys.toSeq
   }
 
   /**

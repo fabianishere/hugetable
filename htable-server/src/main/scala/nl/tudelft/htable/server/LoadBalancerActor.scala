@@ -28,7 +28,7 @@ object LoadBalancerActor {
   /**
    * A message to start a load balancing cycle.
    */
-  final case class Schedule(nodes: Set[Node]) extends Command
+  final case class Schedule(nodes: Set[Node], shouldInvalidate: Boolean = false) extends Command
 
   /**
    * Received when a node reports its tablets.
@@ -65,7 +65,7 @@ object LoadBalancerActor {
   private def idle(client: HTableInternalClient,
                    policy: LoadBalancerPolicy): Behavior[Command] =
     Behaviors.receiveMessagePartial {
-      case Schedule(nodes) => running(client, policy, nodes)
+      case Schedule(nodes, shouldInvalidate) => running(client, policy, nodes, shouldInvalidate)
     }
 
   /**
@@ -77,13 +77,14 @@ object LoadBalancerActor {
    */
   private def running(client: HTableInternalClient,
                       policy: LoadBalancerPolicy,
-                      nodes: Set[Node]): Behavior[Command] = Behaviors.setup { context =>
+                      nodes: Set[Node],
+                      shouldInvalidate: Boolean): Behavior[Command] = Behaviors.setup { context =>
     // asking someone requires a timeout if the timeout hits without response
     // the ask is failed with a TimeoutException
     implicit val timeout: Timeout = 3.seconds
     implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.default())
 
-    context.log.info(s"Starting load balancing cycle ${nodes}")
+    context.log.info(s"Starting load balancing cycle [nodes=$nodes, invalidate=$shouldInvalidate]")
 
     nodes.foreach { node =>
       context.pipeToSelf(client.report(node)) {
@@ -100,16 +101,16 @@ object LoadBalancerActor {
         responses(node) = tablets
 
         if (responses.size == nodes.size)
-          reconstruct(client, policy, responses)
+          reconstruct(client, policy, responses, shouldInvalidate)
         else
           Behaviors.same
       case NodeFailure(node, _) =>
         responses(node) = Set.empty
         if (responses.size == nodes.size)
-          reconstruct(client, policy, responses)
+          reconstruct(client, policy, responses, shouldInvalidate)
         else
           Behaviors.same
-      case Schedule(nodes) => running(client, policy, nodes)
+      case Schedule(nodes, shouldInvalidate) => running(client, policy, nodes, shouldInvalidate)
     }
   }
 
@@ -118,7 +119,8 @@ object LoadBalancerActor {
    */
   private def reconstruct(client: HTableInternalClient,
                           policy: LoadBalancerPolicy,
-                          tablets: mutable.HashMap[Node, Set[Tablet]]): Behavior[Command] = Behaviors.setup { context =>
+                          tablets: mutable.HashMap[Node, Set[Tablet]],
+                          shouldInvalidate: Boolean): Behavior[Command] = Behaviors.setup { context =>
     implicit val timeout: Timeout = 3.seconds
     implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.blocking())
     implicit val mat: Materializer = Materializer(context.system)
@@ -133,7 +135,7 @@ object LoadBalancerActor {
     val uidToNode = tablets.keys.map(node => (node.uid, node)).toMap
 
     // Start load balancing cycle
-    policy.startCycle(tablets.keySet)
+    policy.startCycle(tablets.toMap)
 
     // Make sure the root tablet is up and if not, select a node to host the tablet.
     val rootNode = tablets.find(_._2.exists(Tablet.isRoot)) match {
@@ -142,14 +144,22 @@ object LoadBalancerActor {
         val selectedNode = policy.select(Tablet.root)
         context.log.debug(s"Assigning tablet root to $selectedNode")
         // Make sure we also assign the tablet
-        val nodeAssignment = tablets.getOrElse(selectedNode, Set.empty) + Tablet.root
-        client.assign(selectedNode, nodeAssignment)
+        val nodeAssignment = tablets.updateWith(selectedNode) { v => Some(v.getOrElse(Set.empty) + Tablet.root) }
+        client.assign(selectedNode, nodeAssignment.get)
         selectedNode
     }
 
     // Clear the current assignments
-    tablets.clear()
-    tablets(rootNode) = Set(Tablet.root)
+    if (shouldInvalidate) {
+      context.log.debug("Clearing all current assignments")
+      tablets.foreach { case (node, tablets) => client.assign(node, tablets.filter(Tablet.isRoot)) }
+      tablets.clear()
+      // XXX Currently, the root METADATA tablet is fixed to a single node (in the absence of failures)
+      tablets(rootNode) = Set(Tablet.root)
+    }
+
+    // In case we keep the old assignments, add them to our assignment mapping
+    tablets.foreach { case (node, assignments) => assignments.foreach(tablet => newAssignment(tablet) = node) }
 
     // Query the root node
     query(rootNode)
@@ -174,9 +184,7 @@ object LoadBalancerActor {
     def assign(tablet: Tablet, node: Node, shouldUpdateMeta: Boolean = true, isNew: Boolean = false): Unit = {
       // Note that this operation must always return some Seq value
       val assignments = tablets
-        .updateWith(node) { tablets =>
-          Some(tablets.map(_ + tablet).getOrElse(Set.empty))
-        }
+        .updateWith(node) { tablets => Some(tablets.getOrElse(Set.empty) + tablet) }
         .get
 
       // Update metadata tablet to reflect the assignment
@@ -238,7 +246,7 @@ object LoadBalancerActor {
     }
 
     Behaviors.receiveMessagePartial {
-      case Schedule(nodes) => running(client, policy, nodes)
+      case Schedule(nodes, shouldInvalidate) => running(client, policy, nodes, shouldInvalidate)
       case NodeRow(_, row) =>
         context.log.debug(s"Received row $row")
         MetaHelpers.readRow(row) match {

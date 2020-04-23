@@ -12,9 +12,9 @@ trait LoadBalancerPolicy {
   /**
    * This method is invoked when the load balancing cycle is started.
    *
-   * @param nodes The nodes that should be included in the assignment.
+   * @param currentAssignments The current assignments.
    */
-  def startCycle(nodes: Set[Node]): Unit
+  def startCycle(currentAssignments: Map[Node, Set[Tablet]]): Unit
 
   /**
    * Select the [Node] to which the specified [tablet] should be assigned.

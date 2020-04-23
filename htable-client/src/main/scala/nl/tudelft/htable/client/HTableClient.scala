@@ -38,9 +38,9 @@ trait HTableClient {
   def split(tablet: Tablet, splitKey: ByteString): Future[Done]
 
   /**
-   * Invalidate the specified tablets.
+   * Balance the given set of tablets.
    */
-  def invalidate(tablets: Seq[Tablet]): Future[Done]
+  def balance(tablets: Set[Tablet] = Set.empty, shouldInvalidate: Boolean = false): Future[Done]
 
   /**
    * Query the rows of a table on a particular node.

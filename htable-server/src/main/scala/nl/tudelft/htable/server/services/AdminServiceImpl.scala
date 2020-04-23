@@ -36,9 +36,9 @@ private[htable] class AdminServiceImpl(handler: ActorRef[Command])(implicit val 
     promise.future.map(_ => DeleteTableResponse())
   }
 
-  override def invalidate(in: InvalidateRequest): Future[InvalidateResponse] = {
+  override def balance(in: BalanceRequest): Future[BalanceResponse] = {
     val promise = Promise[Done]
-    handler ! AdminActor.Invalidate(in.tablets, promise)
-    promise.future.map(_ => InvalidateResponse())
+    handler ! AdminActor.Balance(in.tablets.toSet, in.invalidate, promise)
+    promise.future.map(_ => BalanceResponse())
   }
 }

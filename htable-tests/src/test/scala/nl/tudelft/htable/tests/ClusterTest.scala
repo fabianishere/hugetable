@@ -5,7 +5,7 @@ import java.net.InetSocketAddress
 import akka.actor.typed.ActorSystem
 import nl.tudelft.htable.client.HTableClient
 import nl.tudelft.htable.core.Node
-import nl.tudelft.htable.server.RoundRobinLoadBalancerPolicy
+import nl.tudelft.htable.server.RandomLoadBalancerPolicy
 import org.junit.jupiter.api.{AfterAll, BeforeAll, DisplayName}
 
 /**
@@ -42,7 +42,7 @@ class ClusterTest extends AbstractIntegrationTest {
 
     servers = (0 until nodes).map { index =>
       val node = Node("test-" + index, new InetSocketAddress("localhost", 8818 + index))
-      TestUtils.startServer(node, new RoundRobinLoadBalancerPolicy())
+      TestUtils.startServer(node, new RandomLoadBalancerPolicy())
     }
     // Wait until the servers are up
     Thread.sleep(5000)
@@ -60,7 +60,8 @@ class ClusterTest extends AbstractIntegrationTest {
     client.close()
     servers.foreach(_.terminate())
 
+    Thread.sleep(1000)
+    TestUtils.stopZooKeeper()
     TestUtils.stopHDFS()
-    // TestUtils.stopZooKeeper()
   }
 }
