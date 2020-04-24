@@ -5,7 +5,7 @@ import java.io.File
 import com.typesafe.scalalogging.Logger
 import org.apache.curator.test.TestingServer
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.hdfs.MiniDFSCluster
+import org.apache.hadoop.hdfs.{DFSConfigKeys, MiniDFSCluster, MiniDFSNNTopology}
 import org.rogach.scallop.{ScallopConf, ScallopOption}
 
 import scala.collection.Seq
@@ -30,13 +30,17 @@ object Main {
 
     log.info("Starting embedded test environment")
 
-    log.info(s"Starting ZooKeeper test cluster on port ${conf.zookeeperPort()}")
-    val zookeeper = startZooKeeper(conf)
-    zookeeper.start()
+    if (!conf.disableZookeeper()) {
+      log.info(s"Starting ZooKeeper test cluster on port ${conf.zookeeperPort()}")
+      val zookeeper = startZooKeeper(conf)
+      zookeeper.start()
+    }
 
-    log.info(s"Starting Hadoop Mini HDFS cluster on port ${conf.hdfsPort()}")
-    val hdfs = startHDFS(conf)
-    hdfs.waitClusterUp()
+    if (!conf.disableHdfs()) {
+      log.info(s"Starting Hadoop Mini HDFS cluster on port ${conf.hdfsPort()}")
+      val hdfs = startHDFS(conf)
+      hdfs.waitClusterUp()
+    }
   }
 
   /**
@@ -46,7 +50,6 @@ object Main {
     val hdfsConf = new Configuration()
     hdfsConf.set(MiniDFSCluster.HDFS_MINIDFS_BASEDIR, conf.hdfsData().getAbsolutePath)
     hdfsConf.setBoolean("dfs.webhdfs.enabled", true)
-
     val builder = new MiniDFSCluster.Builder(hdfsConf)
     builder
       .nameNodePort(conf.hdfsPort())
@@ -69,9 +72,19 @@ object Main {
   private class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
 
     /**
+     * A flag to disable ZooKeeper.
+     */
+    val disableZookeeper: ScallopOption[Boolean] = opt[Boolean](descr = "Disable ZooKeeper", default = Some(false))
+
+    /**
      * An option for specifying the ZooKeeper port to listen to.
      */
     val zookeeperPort: ScallopOption[Int] = opt[Int](descr = "The ZooKeeper port to listen to", default = Some(2181))
+
+    /**
+     * A flag to disable HDFS.
+     */
+    val disableHdfs: ScallopOption[Boolean] = opt[Boolean](descr = "Disable HDFS", default = Some(false))
 
     /**
      * An option for specifying the HDFS port to listen to.
