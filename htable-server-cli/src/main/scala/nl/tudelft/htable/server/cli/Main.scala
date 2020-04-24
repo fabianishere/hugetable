@@ -49,7 +49,7 @@ object Main {
         throw new IllegalArgumentException(s"Unknown load balancer policy $value")
     }
 
-    val node = Node(UUID.randomUUID().toString, new InetSocketAddress("localhost", conf.port()))
+    val node = Node(UUID.randomUUID().toString, new InetSocketAddress(conf.address(), conf.port()))
     val driver = new HBaseStorageDriverProvider(fs)
     ActorSystem(HTableActor(node, zookeeper, driver, loadBalancerPolicy), "htable", actorConf)
   }
@@ -81,6 +81,11 @@ object Main {
      * An option for specifying the port to connect to.
      */
     val port: ScallopOption[Int] = opt[Int](short = 'p', descr = "The port to connect to", required = true)
+
+    /**
+     * An option for specifying the address to connect to.
+     */
+    val address: ScallopOption[String] = opt[String](short = 'a', descr = "The address to connect to", default = Some("localhost"))
 
     /**
      * An option for specifying the load balancing policy.
