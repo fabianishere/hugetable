@@ -60,8 +60,6 @@ object ExperimentRunner {
     zookeeper.blockUntilConnected()
 
     conf.subcommand match {
-      case Some(conf.setup) =>
-        runInitialSetup(conf, zookeeper)
       case Some(conf.read) =>
         runExperiment(conf, zookeeper, "read")
       case Some(conf.write) =>
@@ -76,14 +74,14 @@ object ExperimentRunner {
   /**
    * Run the initial setup to create the database structure.
    */
-  private def runInitialSetup(conf: Conf, zookeeper: CuratorFramework): Unit = {
+  private def runSetup(conf: Conf, zookeeper: CuratorFramework, table: String): Unit = {
     val client = HTableClient(zookeeper)
 
-    logger.info("Creating table: test")
-    Await.ready(client.createTable("test"), 100.seconds)
+    logger.info(s"Creating table: $table")
+    Await.ready(client.createTable(table), 100.seconds)
 
     val maxSize = conf.maxRows()
-    val splits = conf.setup.splits()
+    val splits = conf.splits()
     val splitSize = maxSize / splits
 
     logger.info(s"Creating ${splits} split points")
@@ -91,11 +89,24 @@ object ExperimentRunner {
     for (i <- 1 until splits) {
       val splitPoint = s"row_${maxSize - (i * splitSize)}"
       logger.info(s"Split at $splitPoint")
-      Await.ready(client.split("test", splitKey = ByteString(splitPoint)), 100.seconds)
+      Await.ready(client.split(table, splitKey = ByteString(splitPoint)), 100.seconds)
 
       // Wait a bit for the change to process
       Thread.sleep(1000)
     }
+
+    logger.info("Done")
+    client.close()
+  }
+
+  /**
+   * Tear down a table.
+   */
+  private def runTearDown(conf: Conf, zookeeper: CuratorFramework, table: String): Unit = {
+    val client = HTableClient(zookeeper)
+
+    logger.info(s"Delete table: $table")
+    Await.ready(client.deleteTable(table), 100.seconds)
 
     logger.info("Done")
     client.close()
@@ -109,11 +120,12 @@ object ExperimentRunner {
     val pw = new PrintWriter(new File(s"experiment-$name-${System.currentTimeMillis()}.json"))
 
     for (i <- 1 to conf.repeats()) {
-      // When writing clear the table beforehand
-      if (name == "write") {
-        vacuumTable(zookeeper)
-      }
-      runTrial(conf, zookeeper, i, conf.repeats(), name == "read", pw)
+      val table = if (name == "read") "test" else i.toString
+      if (name == "write")
+        runSetup(conf, zookeeper, table)
+      runTrial(conf, zookeeper, table, i, conf.repeats(), name == "read", pw)
+      if (name == "write")
+        runTearDown(conf, zookeeper, table)
     }
 
     pw.close()
@@ -122,35 +134,34 @@ object ExperimentRunner {
   /**
    * Run an trial of the experiment.
    */
-  private def runTrial(conf: Conf, zookeeper: CuratorFramework, trial: Int, total: Int, read: Boolean,
+  private def runTrial(conf: Conf, zookeeper: CuratorFramework, table: String, trial: Int, total: Int, read: Boolean,
                        writer: PrintWriter): Unit = {
     logger.info(s"Starting trial $trial/$total")
 
     val trialStart = System.currentTimeMillis()
     val totalRequests = new LongAdder()
-    val totalDuration = new LongAdder()
     val maxRows = conf.maxRows()
     val totalTimings = new ConcurrentLinkedQueue[ArrayBuffer[Long]]()
 
     val col = ByteString("column")
     val value = ByteString("a" * 1000) // We write 1000 byte values per request (same as big table paper)
 
-    val futures = (0 until conf.threads()).map { _ =>
+    val futures = (0 until conf.threads()).map { t =>
       Future {
         val timings = mutable.ArrayBuffer[Long]()
         val client = HTableClient(zookeeper)
         val random = new Random()
+        val opsPerThread = conf.ops() / conf.threads()
 
-        for (i <- 0 until conf.ops() / conf.threads()) {
+        for (i <- 0 until opsPerThread) {
           val nextRow = random.nextInt(maxRows)
           val start = System.currentTimeMillis()
-          logger.info(s"Next row at $nextRow $read")
           val result =
             if (read) {
-              val scan: Scan = Scan("test", RowRange.prefix(ByteString("row" + nextRow)))
+              val scan: Scan = Scan(table, RowRange.prefix(ByteString("row" + nextRow)))
               client.read(scan).runFold(0)( (acc, _) => acc + 1)
             } else {
-              val mutation: RowMutation = RowMutation("test", ByteString("row_" + nextRow))
+              val mutation: RowMutation = RowMutation(table, ByteString("row_" + nextRow))
                 .put(RowCell(col, start, value))
               client.mutate(mutation)
             }
@@ -167,12 +178,11 @@ object ExperimentRunner {
           val end = System.currentTimeMillis()
           val duration = end - start
           totalRequests.increment()
-          totalDuration.add(duration)
           timings.addOne(duration)
 
           if (i % 1000 == 0) {
-            val throughput = totalRequests.longValue() / totalDuration.doubleValue()
-            logger.info(s"$trial/$total (${throughput / 1000} ops/s)")
+            val throughput = (totalRequests.longValue() / (end - trialStart).toDouble) * 1000
+            logger.info(s"$trial/$total [$t] At $i/$opsPerThread ($throughput ops/s)")
           }
         }
 
@@ -185,7 +195,7 @@ object ExperimentRunner {
 
     val trialEnd = System.currentTimeMillis()
     val trialDuration = trialEnd - trialStart
-    val throughput = totalRequests.longValue() / totalDuration.doubleValue()
+    val throughput = (totalRequests.longValue() / trialDuration.toDouble) * 1000
     val timingsString = totalTimings.asScala.flatten.mkString(",")
     writer.println(
       s"""
@@ -198,29 +208,7 @@ object ExperimentRunner {
          |}${if (trial == total) "" else ","}
          |""".stripMargin
     )
-    logger.info(s"Finished trial $trial/$total: ${trialDuration / 1000} seconds (${throughput * 1000} ops/s)")
-  }
-
-  /**
-   * Prepare for a trial by clearing the test table.
-   */
-  private def vacuumTable(zookeeper: CuratorFramework): Unit = {
-    logger.info("Vacuuming existing test rows")
-
-    // Clean existing table
-    val client = HTableClient(zookeeper)
-    try {
-      val future = client.read(Scan("test", RowRange.unbounded))
-        .mapAsyncUnordered(8)(row => client.mutate(RowMutation("test", row.key).delete()))
-        .runFold(Done)((_, _) => Done)
-      Await.result(future, 100.seconds)
-    } catch {
-      case e: Throwable =>
-        logger.error("Failed to vacuum table", e)
-        throw e
-    } finally {
-      client.close()
-    }
+    logger.info(s"Finished trial $trial/$total: ${trialDuration / 1000} seconds ($throughput ops/s)")
   }
 
   /**
@@ -245,7 +233,7 @@ object ExperimentRunner {
     val ops: ScallopOption[Int] = opt[Int](
       short = 'o',
       descr = "The number of operations to perform in total",
-      default = Some(1_000_000)
+      default = Some(100_000)
     )
 
     /**
@@ -261,7 +249,7 @@ object ExperimentRunner {
      */
     val repeats: ScallopOption[Int] = opt[Int](
       descr = "The number of repeats to perform",
-      default = Some(32)
+      default = Some(8)
     )
 
     /**
@@ -274,24 +262,17 @@ object ExperimentRunner {
     )
 
     /**
+     * The number of splits to perform.
+     */
+    val splits: ScallopOption[Int] = opt[Int](
+      descr = "The number of splits to perform",
+      default = Some(8)
+    )
+
+    /**
      * An option for appending extra information to the resulting file.
      */
     val extra: Map[String, String] = propsLong[String]("extra")
-
-    /**
-     * Perform the initial setup of the experiments.
-     */
-    val setup = new Subcommand("setup") {
-
-      /**
-       * The number of splits to perform.
-       */
-      val splits: ScallopOption[Int] = opt[Int](
-        descr = "The number of splits to perform",
-        default = Some(8)
-      )
-    }
-    addSubcommand(setup)
 
     /**
      * Perform a READ experiment

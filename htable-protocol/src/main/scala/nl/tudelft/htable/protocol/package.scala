@@ -51,4 +51,10 @@ package object protocol {
    */
   implicit val rowRangeType: TypeMapper[protocol.RowRange, core.RowRange] =
     TypeMapper[protocol.RowRange, core.RowRange](rowRangeToCore)(rowRangeToProtobuf)
+
+  /**
+   * A [TypeMapper] for the [AssignType] type.
+   */
+  implicit val actionType: TypeMapper[protocol.internal.AssignRequest.Action, core.AssignAction] =
+    TypeMapper[protocol.internal.AssignRequest.Action, core.AssignAction](actionToCore)(actionToProtobuf)
 }

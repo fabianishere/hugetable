@@ -9,6 +9,7 @@ import com.typesafe.scalalogging.Logger
 import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hbase.client.{Delete, Get, Put, RegionInfoBuilder, Scan}
 import org.apache.hadoop.hbase.regionserver.{HRegion, HRegionFileSystem, Region, RegionScanner}
 import org.apache.hadoop.hbase.{Cell, CellBuilderFactory, CellBuilderType, CellUtil}
@@ -18,7 +19,7 @@ import scala.jdk.CollectionConverters._
 /**
  * An implementation of [TabletDriver] for HBase, corresponding to a single [HRegion].
  */
-class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet) extends TabletDriver {
+class HBaseTabletDriver(private val conf: Configuration, val region: HRegion, override val tablet: Tablet) extends TabletDriver {
   private val logger = Logger[HBaseStorageDriver.type]
 
   /**
@@ -177,7 +178,6 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
 
   override def close(delete: Boolean): Unit = {
     if (delete) {
-      val conf = region.getFilesystem.getConf
       val fs = region.getFilesystem
       val tableDir = region.getRegionFileSystem.getTableDir
       val regionInfo = region.getRegionInfo

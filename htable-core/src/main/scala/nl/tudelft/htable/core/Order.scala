@@ -36,6 +36,10 @@ object Order {
     .by[Tablet, String](_.table)
     .orElse(Ordering.comparatorToOrdering(new Comparator[Tablet] {
       def compare(l: Tablet, r: Tablet): Int = {
+        // Fast path: pointer equality
+        if (l eq r) {
+          return 0
+        }
 
         var result = Order.compare(l.range.start, r.range.start)
 

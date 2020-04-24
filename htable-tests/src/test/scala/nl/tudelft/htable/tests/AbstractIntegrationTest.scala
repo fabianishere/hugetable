@@ -6,7 +6,7 @@ import akka.stream.testkit.scaladsl.TestSink
 import akka.util.ByteString
 import nl.tudelft.htable.client.HTableClient
 import nl.tudelft.htable.client.impl.MetaHelpers
-import nl.tudelft.htable.core.{Get, Row, RowCell, RowMutation, RowRange, Scan, Tablet, TabletState}
+import nl.tudelft.htable.core.{Order => _, _}
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation
 import org.junit.jupiter.api.TestInstance.Lifecycle
 import org.junit.jupiter.api._
@@ -223,7 +223,7 @@ abstract class AbstractIntegrationTest {
   @Order(8)
   @DisplayName("split returns successfully")
   def testSplit(): Unit = {
-    val future = client.split(Tablet("test", RowRange.unbounded), ByteString(4))
+    val future = client.split("test", ByteString(4))
     Await.result(future, 5.seconds)
 
     // Wait a few seconds before the change is propagated

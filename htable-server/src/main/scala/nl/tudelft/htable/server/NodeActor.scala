@@ -7,7 +7,6 @@ import akka.util.ByteString
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.client.HTableInternalClient
 import nl.tudelft.htable.client.impl.MetaHelpers
-import nl.tudelft.htable.core.AssignType.AssignType
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.{StorageDriverProvider, TabletDriver}
 
@@ -43,7 +42,7 @@ object NodeActor {
   /**
    * Message sent to a node to assign it a set of tablets.
    */
-  final case class Assign(tablets: Seq[Tablet], assignType: AssignType, promise: Promise[Done]) extends Command
+  final case class Assign(actions: Seq[AssignAction], promise: Promise[Done]) extends Command
 
   /**
    * Read the following query from the node.
@@ -101,7 +100,7 @@ object NodeActor {
           context.log.warn("Reporting disabled node")
           promise.success(Seq.empty)
           Behaviors.same
-        case Assign(_, _, promise) =>
+        case Assign(_, promise) =>
           context.log.warn("Assigning on disabled node")
           promise.failure(new IllegalStateException(s"Node endpoint not enabled for node $self"))
           Behaviors.same
@@ -154,34 +153,62 @@ object NodeActor {
         case Report(promise) =>
           promise.success(tables.flatMap(_._2.values).map(_.tablet).toSeq)
           Behaviors.same
-        case Assign(newTablets, assignType, promise) =>
+        case Assign(actions, promise) =>
           val currentTablets = tables.flatMap(_._2.values).map(_.tablet).toSet
-          val newTabletsSet = newTablets.toSet
-          val removeTablets =
-            if (assignType == AssignType.Set)
-              currentTablets.diff(newTabletsSet)
-            else
-              Set.empty[Tablet]
-          val addTablets = newTabletsSet.diff(currentTablets)
+          val removedTablets = mutable.TreeSet[Tablet]()
+          val addedTablets = mutable.TreeSet[Tablet]()
 
-          // Remove tablets
-          for (tablet <- removeTablets) {
-            context.log.info(s"REMOVE: $tablet from $self")
-            val driver = tables.get(tablet.table).flatMap(_.remove(tablet.range.start))
-            driver.foreach(_.close())
+          def add(tablet: Tablet, create: Boolean = false): Unit = {
+            if (currentTablets.contains(tablet) && !removedTablets.contains(tablet)) {
+              context.log.trace(s"Skipping ADD on $tablet: no effect")
+              return
+            }
+
+            context.log.info(s"ADD: $tablet on $self [create=$create]")
+            val tablets = tables.getOrElseUpdate(tablet.table, new mutable.TreeMap[ByteString, TabletDriver]()(Order.keyOrdering))
+            tablets.put(tablet.range.start, if (create) storageDriver.createTablet(tablet) else storageDriver.openTablet(tablet))
+
+            addedTablets.addOne(tablet)
+            removedTablets.remove(tablet)
           }
 
-          // Spawn new tablet managers
-          for (tablet <- addTablets) {
-            context.log.info(s"SPAWN: $tablet on $self")
-            val tablets =
-              tables.getOrElseUpdate(tablet.table, new mutable.TreeMap[ByteString, TabletDriver]()(Order.keyOrdering))
-            tablets.put(tablet.range.start, storageDriver.openTablet(tablet))
+          def remove(tablet: Tablet, delete: Boolean = false): Unit = {
+            if (!currentTablets.contains(tablet) && !addedTablets.contains(tablet)) {
+              if (delete) {
+                storageDriver.openTablet(tablet).close(delete = true)
+              } else {
+                context.log.trace(s"Skipping REMOVE on $tablet: no effect")
+              }
+              return
+            }
+
+            context.log.info(s"DELETE: $tablet from $self [delete=$delete]")
+            tables.get(tablet.table)
+              .flatMap(_.remove(tablet.range.start))
+              .foreach(_.close(delete))
+
+            addedTablets.remove(tablet)
+            removedTablets.addOne(tablet)
+          }
+
+          def clear(): Unit = {
+            currentTablets.foreach(tablet => remove(tablet))
+          }
+
+          for (action <- actions) {
+            context.log.trace(s"Processing action on ${action.tablet}: ${action.action}")
+            action.action match {
+              case AssignType.Add => add(action.tablet)
+              case AssignType.Remove => remove(action.tablet)
+              case AssignType.Create => add(action.tablet, create = true)
+              case AssignType.Delete => remove(action.tablet, delete = true)
+              case AssignType.Clear => clear()
+            }
           }
 
           // Inform root actor if changes
-          if (addTablets.nonEmpty || removeTablets.nonEmpty) {
-            listener ! Serving(addTablets, removeTablets)
+          if (addedTablets.nonEmpty || removedTablets.nonEmpty) {
+            listener ! Serving(addedTablets.toSet, removedTablets.toSet)
           }
 
           promise.success(Done)
@@ -266,4 +293,5 @@ object NodeActor {
           Behaviors.stopped
       }
   }
+
 }

@@ -1,9 +1,9 @@
 package nl.tudelft.htable.core
 
 /**
- * The type of ways to assign a tablet to a node.
+ * The possible actions to perform for an assignment.
  */
 object AssignType extends Enumeration {
-  type AssignType = Value
-  val Set, Add = Value
+  type Type = Value
+  val Add, Remove, Create, Delete, Clear = Value
 }

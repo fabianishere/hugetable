@@ -7,6 +7,11 @@ object TabletState extends Enumeration {
   type TabletState = Value
 
   /**
+   * The tablet has just been created.
+   */
+  val Created: Value = Value
+
+  /**
    * The tablet is currently being served by a node.
    */
   val Served: Value = Value
@@ -20,4 +25,9 @@ object TabletState extends Enumeration {
    * The tablet is closed.
    */
   val Closed: Value = Value
+
+  /**
+   * The tablet was removed.
+   */
+  val Deleted: Value = Value
 }

@@ -73,7 +73,7 @@ class HBaseStorageDriver(val node: Node, val fs: FileSystem) extends StorageDriv
         HRegion.openHRegion(conf, FileSystem.get(conf), rootDir, info, tableDescriptor, WAL)
       else
         HRegion.createHRegion(info, rootDir, conf, tableDescriptor, WAL, true)
-    new HBaseTabletDriver(region, tablet)
+    new HBaseTabletDriver(conf, region, tablet)
   }
 
   override def close(): Unit = {

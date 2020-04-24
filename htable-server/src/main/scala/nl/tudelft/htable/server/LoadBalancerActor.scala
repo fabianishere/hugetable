@@ -8,6 +8,7 @@ import akka.stream.typed.scaladsl.ActorSink
 import akka.util.{ByteString, Timeout}
 import nl.tudelft.htable.client.HTableInternalClient
 import nl.tudelft.htable.client.impl.MetaHelpers
+import nl.tudelft.htable.core.TabletState.TabletState
 import nl.tudelft.htable.core._
 
 import scala.collection.mutable
@@ -160,11 +161,11 @@ object LoadBalancerActor {
       case None =>
         val selectedNode = policy.select(Tablet.root)
         context.log.debug(s"Assigning root METADATA tablet to $selectedNode")
-        client.assign(selectedNode, Set(Tablet.root), AssignType.Add)
+        client.assign(selectedNode, Seq(AssignAction(Tablet.root, AssignType.Add)))
         selectedNode
     }
 
-    val previousAssignments = mutable.TreeMap[Tablet, Option[Node]]()
+    val previousAssignments = mutable.TreeMap[Tablet, (TabletState, Option[Node])]()
     val newAssignments = mutable.TreeMap[Tablet, Node]()
 
     val queue = mutable.ArrayDeque[Tablet]()
@@ -204,12 +205,12 @@ object LoadBalancerActor {
         } else if (Tablet.isMeta(tablet)) {
           // For other METADATA tablets, find out whether it is currently assigned (and if not assign it to some node)
           // and query its rows.
-          val node = previousAssignments(tablet) match {
+          val node = previousAssignments(tablet)._2 match {
             case Some(value) => value
             case None =>
               val node = policy.select(tablet)
               context.log.debug(s"Assigning $tablet to $node")
-              client.assign(node, Set(tablet), AssignType.Add)
+              client.assign(node, Seq(AssignAction(Tablet.root, AssignType.Add)))
               newAssignments(tablet) = node
               node
           }
@@ -238,7 +239,7 @@ object LoadBalancerActor {
             context.log.debug(s"Discovered $tablet $state on $node")
 
             if (state != TabletState.Closed) {
-              previousAssignments.put(tablet, node)
+              previousAssignments.put(tablet, (state, node))
               queue += tablet
             }
           case None =>
@@ -250,7 +251,7 @@ object LoadBalancerActor {
           context.log.info(s"Discovered no tablets on $node: Initializing METADATA")
           // If the root node does not contain any rows, it means that the METADATA table is not populated. Therefore,
           // we initialize it here.
-          updateMeta(client, rootNode, Tablet.root, rootNode, isNew = true)
+          updateMeta(client, rootNode, Tablet.root, rootNode, AssignType.Create)
 
           context.log.info("Scheduling cycle completed")
           policy.endCycle()
@@ -284,23 +285,24 @@ object LoadBalancerActor {
    */
   private def assign(client: HTableInternalClient,
                      policy: LoadBalancerPolicy,
-                     previousAssignments: mutable.TreeMap[Tablet, Option[Node]],
+                     previousAssignments: mutable.TreeMap[Tablet, (TabletState, Option[Node])],
                      newAssignments: mutable.TreeMap[Tablet, Node],
                      shouldInvalidate: Boolean): Behavior[Command] = Behaviors.setup { context =>
     implicit val timeout: Timeout = 3.seconds
     implicit val ec: ExecutionContext = context.system.dispatchers.lookup(DispatcherSelector.blocking())
 
-    val n = previousAssignments.count(p => if (shouldInvalidate) true else p._2.isDefined)
-    context.log.debug(s"Assigning $n tablets")
+    val n = previousAssignments.count(p => if (shouldInvalidate) true else p._2._2.isEmpty)
+    context.log.debug(s"Assigning $n tablets (${newAssignments.size} already assigned)")
+    context.log.trace(s"Found previous assignments: $previousAssignments")
 
     // Aggregate the tablets by the node they are currently assigned to and report this to the load balancing policy
     val previousNodeTablets = previousAssignments
-      .flatMap { case (tablet, node) => node.map(node => (tablet, node)) }
+      .flatMap { case (tablet, (_, node)) => node.map(node => (tablet, node)) }
       .groupMapReduce(_._2)(p => Set(p._1))(_ ++ _)
     policy.discover(previousNodeTablets)
 
     // Assign each tablet to a node
-    for ((tablet, nodeOpt) <- previousAssignments if !newAssignments.contains(tablet)) {
+    for ((tablet, (_, nodeOpt)) <- previousAssignments if !newAssignments.contains(tablet)) {
       val node = nodeOpt.filter(_ => !shouldInvalidate).getOrElse(policy.select(tablet))
       newAssignments(tablet) = node
     }
@@ -310,8 +312,26 @@ object LoadBalancerActor {
       .groupMapReduce(_._2)(p => Set(p._1))(_ ++ _)
       .map {
         case (node, tablets) =>
-          client.assign(node, tablets).flatMap { _ =>
-            val futures = tablets.map { tablet =>
+          val flushActions = previousAssignments.keySet.diff(tablets).toSeq.map(tablet => AssignAction(tablet, AssignType.Remove))
+          val newActions = tablets.map { tablet =>
+            val actionType = previousAssignments(tablet)._1 match {
+              case TabletState.Created => AssignType.Create
+              case TabletState.Served => AssignType.Add
+              case TabletState.Unassigned => AssignType.Add
+              case TabletState.Closed => AssignType.Remove
+              case TabletState.Deleted => AssignType.Delete
+            }
+            AssignAction(tablet, actionType)
+          }.toSeq
+          val actions = flushActions ++ newActions
+
+          actions.foreach { action =>
+            context.log.info(s"Assign ${action.tablet} (${action.action}) to ${node}")
+          }
+
+          client.assign(node, actions).flatMap { _ =>
+            val futures = newActions.map { action =>
+              val tablet = action.tablet
               // Update metadata tablet to reflect the assignment
               val key = ByteString(tablet.table) ++ tablet.range.start
               val metaNode =
@@ -320,9 +340,11 @@ object LoadBalancerActor {
                 else
                   newAssignments.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
 
+              val prev = previousAssignments.get(tablet)
               // Only update meta if the node that is hosting the tablet has changed.
-              if (!previousAssignments.get(tablet).exists(_.contains(node))) {
-                updateMeta(client, metaNode, tablet, node)
+              if (!prev.exists(_._2.contains(node)) || prev.exists(_._1 != TabletState.Served)) {
+                context.log.info(s"Updating METADATA for $tablet on $node")
+                updateMeta(client, metaNode, tablet, node, action.action)
               } else {
                 context.log.debug(s"Skipping ${tablet}: already assigned to $node")
                 Future.successful(Done)
@@ -358,12 +380,14 @@ object LoadBalancerActor {
                          metaNode: Node,
                          tablet: Tablet,
                          node: Node,
-                         isNew: Boolean = false): Future[Done] = {
+                         action: AssignType.Type): Future[Done] = {
     val mutation =
-      if (isNew)
-        MetaHelpers.writeNew(tablet, TabletState.Served, Some(node))
-      else
-        MetaHelpers.writeExisting(tablet, TabletState.Served, Some(node))
+      action match {
+        case AssignType.Add => MetaHelpers.writeExisting(tablet, TabletState.Served, Some(node))
+        case AssignType.Create => MetaHelpers.writeNew(tablet, TabletState.Served, Some(node))
+        case AssignType.Delete => RowMutation("METADATA", ByteString(tablet.table) ++ tablet.range.start).delete()
+        case _ => throw new IllegalArgumentException()
+      }
 
     // Assign the tablet to the chosen node
     client.mutate(metaNode, mutation)

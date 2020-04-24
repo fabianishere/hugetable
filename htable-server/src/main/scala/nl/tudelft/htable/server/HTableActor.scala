@@ -1,11 +1,8 @@
 package nl.tudelft.htable.server
 
-import java.nio.ByteOrder
-
 import akka.actor.typed._
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
-import akka.util.{ByteString, ByteStringBuilder}
 import nl.tudelft.htable.client.impl.DefaultServiceResolverImpl
 import nl.tudelft.htable.client.{CachingServiceResolver, HTableClient, HTableInternalClient}
 import nl.tudelft.htable.core._
@@ -15,7 +12,7 @@ import nl.tudelft.htable.storage.StorageDriverProvider
 import org.apache.curator.framework.CuratorFramework
 
 import scala.collection.mutable
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
 
 object HTableActor {
 

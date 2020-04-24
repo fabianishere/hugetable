@@ -8,7 +8,6 @@ import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
 import akka.{Done, NotUsed}
 import nl.tudelft.htable.client.{HTableInternalClient, ServiceResolver}
-import nl.tudelft.htable.core.AssignType.AssignType
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol.CoreAdapters
 import nl.tudelft.htable.protocol.admin.{BalanceRequest, CreateTableRequest, DeleteTableRequest}
@@ -39,8 +38,6 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   private val promise = Promise[Done]()
 
   override def master: Node = resolveMaster()
-
-  override def root: Option[Node] = resolveRoot()
 
   override def balance(tablets: Set[Tablet], shouldInvalidate: Boolean): Future[Done] = {
     val node = resolveMaster()
@@ -143,14 +140,8 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
     resolver.openInternal(node).report(ReportRequest()).map(_.tablets)
   }
 
-  override def assign(node: Node, tablets: Set[Tablet], assignType: AssignType): Future[Done] = {
-    assignType match {
-      case AssignType.Set =>
-        resolver.openInternal(node).setTablets(SetTabletsRequest(tablets.toSeq)).map(_ => Done)
-      case AssignType.Add =>
-        resolver.openInternal(node).addTablets(AddTabletsRequest(tablets.toSeq)).map(_ => Done)
-
-    }
+  override def assign(node: Node, actions: Seq[AssignAction]): Future[Done] = {
+    resolver.openInternal(node).assign(AssignRequest(actions)).map(_ => Done)
   }
 
   override def closed(): Future[Done] = promise.future
@@ -167,7 +158,7 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   }
 
   override def resolve(tablet: Tablet): Source[(Node, Tablet), NotUsed] = {
-    val rootAddress = resolveRoot().get
+    val rootAddress = resolveRoot()
     val rootClient = resolver.openClient(rootAddress)
 
     // We append a null-byte to the end of the range to make it inclusive
@@ -235,8 +226,8 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
       .mapConcat(row => parseMeta(row).map(Seq(_)).getOrElse(Seq()))
       // Take rows up until we find the first row which is outside our range
       .takeWhile {
-        case (metaNode, metaTablet) =>
-          !metaTablet.range.isRightBounded || Order.keyOrdering.gteq(metaTablet.range.end, tablet.range.start)
+        case (_, metaTablet) =>
+          !metaTablet.range.isRightBounded || Order.keyOrdering.gt(metaTablet.range.end, tablet.range.start)
       }
       // Reverse the order of the cells
       .fold(List.empty[(Node, Tablet)])((acc: List[(Node, Tablet)], curr: (Node, Tablet)) => curr :: acc)
@@ -261,14 +252,12 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   /**
    * Resolve the address to the root tablet in ZooKeeper.
    */
-  private def resolveRoot(): Option[Node] = {
-    val res = for {
-      data <- Try { zookeeper.getData.forPath("/root") }
-      uid = new String(data, StandardCharsets.UTF_8)
-      addressData <- Try { zookeeper.getData.forPath(s"/servers/$uid") }
-      address = CoreAdapters.deserializeAddress(addressData)
-    } yield Node(uid, address)
-    res.toOption
+  private def resolveRoot(): Node = {
+    val data = zookeeper.getData.forPath("/root")
+    val uid = new String(data, StandardCharsets.UTF_8)
+    val addressData = zookeeper.getData.forPath(s"/servers/$uid")
+    val address = CoreAdapters.deserializeAddress(addressData)
+    Node(uid, address)
   }
 
   /**

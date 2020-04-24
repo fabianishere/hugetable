@@ -41,19 +41,10 @@ private[htable] class InternalServiceImpl(handler: ActorRef[NodeActor.Command])(
   /**
    * Assign the specified tablets to the node.
    */
-  override def setTablets(in: SetTabletsRequest): Future[SetTabletsResponse] = {
+  override def assign(in: AssignRequest): Future[AssignResponse] = {
     val promise = Promise[Done]
-    handler ! NodeActor.Assign(in.tablets, AssignType.Set, promise)
-    promise.future.map(_ => SetTabletsResponse())
-  }
-
-  /**
-   * Assign the specified tablets to the node.
-   */
-  override def addTablets(in: AddTabletsRequest): Future[AddTabletsResponse] = {
-    val promise = Promise[Done]
-    handler ! NodeActor.Assign(in.tablets, AssignType.Add, promise)
-    promise.future.map(_ => AddTabletsResponse())
+    handler ! NodeActor.Assign(in.actions, promise)
+    promise.future.map(_ => AssignResponse())
   }
 
   /**

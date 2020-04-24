@@ -28,7 +28,6 @@ private[htable] object MetaHelpers {
       state <- row.cells.find(_.qualifier == ByteString("state")).map(cell => TabletState(cell.value(0)))
       nodeUid = row.cells
         .find(_.qualifier == ByteString("node"))
-        .filter(_ => state == TabletState.Served)
         .map(_.value.utf8String)
     } yield (targetTablet, state, nodeUid)
   }

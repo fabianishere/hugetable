@@ -12,7 +12,7 @@ import nl.tudelft.htable.client.HTableInternalClient
 import nl.tudelft.htable.client.impl.MetaHelpers
 import nl.tudelft.htable.core._
 
-import scala.concurrent.{ExecutionContext, Promise}
+import scala.concurrent.{ExecutionContext, Future, Promise}
 
 /**
  * The admin actor handles administrative requests to the cluster, such as creating, deleting or
@@ -102,7 +102,7 @@ object AdminActor {
         // After we invalidate the current tablet distribution, it will automatically be detected by the load balancer
         // and assigned to some node which will actually create the table on disk.
         val tablet = Tablet(table, RowRange.unbounded, 0)
-        val mutation = MetaHelpers.writeNew(tablet, TabletState.Unassigned, None)
+        val mutation = MetaHelpers.writeNew(tablet, TabletState.Created, None)
         client
           .mutate(mutation)
           .onComplete { res =>
@@ -124,7 +124,7 @@ object AdminActor {
               .read(Scan(table, RowRange.unbounded))
               .mapAsyncUnordered(8)(row => client.mutate(RowMutation(table, row.key).delete()))
               .runFold(Done)((_, _) => Done)
-            _ = context.log.debug(s"Cleaning METADATA entries for $table")
+            _ = context.log.debug(s"Updating METADATA entries for $table")
             _ <- client
               .read(Scan("METADATA", RowRange.leftBounded(ByteString(table))))
               .takeWhile { row =>
@@ -135,8 +135,16 @@ object AdminActor {
                 res
               }
               .mapAsyncUnordered(8) { row =>
-                val mutation = RowMutation("METADATA", row.key).delete()
-                client.mutate(mutation)
+                MetaHelpers.readRow(row) match {
+                  case Some((tablet, _, _)) =>
+                    context.log.debug("Updating state of METADATA row")
+                    val mutation = MetaHelpers.writeExisting(tablet, TabletState.Deleted, None)
+                    client.mutate(mutation)
+                  case None =>
+                    context.log.warn("Row in METADATA cannot be parsed")
+                    Future.successful(Done)
+                }
+
               }
               .runFold(Done)((_, _) => Done)
           } yield Done

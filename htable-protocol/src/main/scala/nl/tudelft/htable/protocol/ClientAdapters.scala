@@ -4,6 +4,8 @@ import akka.util.ByteString
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.protocol
 import nl.tudelft.htable.protocol.client.Mutation.{DeleteFromColumn, DeleteFromRow, SetCell}
+import nl.tudelft.htable.protocol.internal.AssignRequest
+import nl.tudelft.htable.protocol.internal.AssignRequest.ActionType
 
 import scala.language.implicitConversions
 
@@ -113,5 +115,47 @@ object ClientAdapters {
 
     RowMutation(rowMutation.tableName, rowMutation.rowKey)
       .copy(mutations = mutations.toList)
+  }
+
+  /**
+   * Convert an action.
+   */
+  private[protocol] def actionToCore(action: AssignRequest.Action): AssignAction = {
+    AssignAction(action.tablet.get, actionTypeToCore(action.actionType))
+  }
+
+  /**
+   * Convert an action.
+   */
+  private[protocol] def actionToProtobuf(action: AssignAction): AssignRequest.Action = {
+    AssignRequest.Action(actionTypeToProtobuf(action.action), Some(action.tablet))
+  }
+
+
+  /**
+   * Convert an action type.
+   */
+  private[protocol] def actionTypeToCore(actionType: AssignRequest.ActionType): AssignType.Type = {
+    actionType match {
+      case ActionType.ADD => AssignType.Add
+      case ActionType.REMOVE => AssignType.Remove
+      case ActionType.CREATE => AssignType.Create
+      case ActionType.DELETE => AssignType.Delete
+      case ActionType.CLEAR => AssignType.Clear
+      case _ => throw new IllegalArgumentException()
+    }
+  }
+
+  /**
+   * Convert an action type.
+   */
+  private[protocol] def actionTypeToProtobuf(actionType: AssignType.Type): AssignRequest.ActionType = {
+    actionType match {
+      case AssignType.Add => AssignRequest.ActionType.ADD
+      case AssignType.Remove => AssignRequest.ActionType.REMOVE
+      case AssignType.Create => AssignRequest.ActionType.CREATE
+      case AssignType.Delete => AssignRequest.ActionType.DELETE
+      case AssignType.Clear => AssignRequest.ActionType.CLEAR
+    }
   }
 }

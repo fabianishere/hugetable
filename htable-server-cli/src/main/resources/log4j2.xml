@@ -6,13 +6,13 @@
         </Console>
     </Appenders>
     <Loggers>
-        <Logger name="nl.tudelft.htable" level="debug" additivity="false">
+        <Logger name="nl.tudelft.htable" level="info" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>
         <Logger name="org.apache.hadoop" level="warn" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>
-        <Logger name="org.apache.hadoop.hbase" level="info" additivity="false">
+        <Logger name="org.apache.hadoop.hbase" level="warn" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>
         <Logger name="org.apache.curator" level="warn" additivity="false">
