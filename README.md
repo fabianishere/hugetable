@@ -1,5 +1,5 @@
 # HugeTable
-Open-source implementation of Google's BigTable.
+Open-source implementation of Google's [BigTable](https://research.google/pubs/pub27898/).
 
 ## Getting Started
 
@@ -30,7 +30,7 @@ single node test environment we provide in the repository.
 
 To start the test environment, please run the following command:
 ```shell script
-htable-test-env/build/install/htable-test-env/bin/htable-test-env    
+build/install/hugetable/bin/htable-test-env    
 ```
 which will start a HDFS node on port 9000 and a ZooKeeper node on port 2181.
 
@@ -38,7 +38,7 @@ which will start a HDFS node on port 9000 and a ZooKeeper node on port 2181.
 The next step is to start one or multiple HugeTable nodes, which together will form a cluster. You may start a node
 as follows:
 ```shell script
-htable-server-cli/build/install/htable-server-cli/bin/htable-server-cli --zookeeper localhost:2181 --hadoop hdfs://localhost:9000 --port 8080
+build/install/hugetable/bin/htable-server-cli --zookeeper localhost:2181 --hadoop hdfs://localhost:9000 --port 8080
 ```
 Make sure you specify the correct ports and don't use duplicate ports for different nodes.
 
@@ -48,7 +48,7 @@ library (`htable-client`). To use the command-line interface interactively, ente
 prompt:
 
 ```shell script
-htable-client-cli/build/install/htable-client-cli/bin/htable-client-cli -i --zookeeper localhost:2181   
+build/install/hugetable/bin/htable-client-cli -i --zookeeper localhost:2181   
 ```
 Make sure again that you specify the correct ZooKeeper port. Then, enter `help` to obtain the possible commands you
 can execute in the cluster.
