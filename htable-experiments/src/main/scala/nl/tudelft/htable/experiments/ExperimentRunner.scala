@@ -202,12 +202,13 @@ object ExperimentRunner {
          |{
          | "trial": ${trial},
          | "duration": ${trialDuration},
-         | ${conf.extra.map(p => s"""" "${p._1}" : "${p._2}", """).mkString("\n")}
+         | ${conf.extra.map(p => s""" "${p._1}" : "${p._2}", """).mkString("\n")}
          | "throughput": ${throughput},
-         | "timings: [$timingsString]
+         | "timings": [$timingsString]
          |}${if (trial == total) "" else ","}
          |""".stripMargin
     )
+    writer.flush()
     logger.info(s"Finished trial $trial/$total: ${trialDuration / 1000} seconds ($throughput ops/s)")
   }
 
