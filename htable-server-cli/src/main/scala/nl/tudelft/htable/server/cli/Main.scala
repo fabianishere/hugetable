@@ -6,7 +6,12 @@ import java.util.UUID
 import akka.actor.typed.ActorSystem
 import com.typesafe.config.ConfigFactory
 import nl.tudelft.htable.core.Node
-import nl.tudelft.htable.server.{MinTabletsLoadBalancerPolicy, HTableActor, RandomLoadBalancerPolicy, RoundRobinLoadBalancerPolicy}
+import nl.tudelft.htable.server.{
+  MinTabletsLoadBalancerPolicy,
+  HTableActor,
+  RandomLoadBalancerPolicy,
+  RoundRobinLoadBalancerPolicy
+}
 import nl.tudelft.htable.storage.hbase.HBaseStorageDriverProvider
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
@@ -44,7 +49,7 @@ object Main {
     val loadBalancerPolicy = conf.loadBalancerPolicy() match {
       case "round-robin" => new RoundRobinLoadBalancerPolicy()
       case "random"      => new RandomLoadBalancerPolicy()
-      case "min-tablets"      => new MinTabletsLoadBalancerPolicy()
+      case "min-tablets" => new MinTabletsLoadBalancerPolicy()
       case value =>
         throw new IllegalArgumentException(s"Unknown load balancer policy $value")
     }
@@ -85,7 +90,8 @@ object Main {
     /**
      * An option for specifying the address to connect to.
      */
-    val address: ScallopOption[String] = opt[String](short = 'a', descr = "The address to connect to", default = Some("localhost"))
+    val address: ScallopOption[String] =
+      opt[String](short = 'a', descr = "The address to connect to", default = Some("localhost"))
 
     /**
      * An option for specifying the load balancing policy.

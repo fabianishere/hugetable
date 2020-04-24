@@ -333,6 +333,7 @@ object Main {
      * A command to balance the current assignments.
      */
     val balance = new Subcommand("balance") {
+
       /**
        * A flag to invalidate the entire assignment.
        */

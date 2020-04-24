@@ -66,8 +66,7 @@ object LoadBalancerActor {
    * @param client The client to communicate with the other nodes.
    * @param policy The load balancing policy.
    */
-  def apply(client: HTableInternalClient,
-            policy: LoadBalancerPolicy): Behavior[Command] = Behaviors.setup { context =>
+  def apply(client: HTableInternalClient, policy: LoadBalancerPolicy): Behavior[Command] = Behaviors.setup { context =>
     context.log.info("Starting load balancer")
     idle(client, policy)
   }
@@ -78,8 +77,7 @@ object LoadBalancerActor {
    * @param client The client to communicate with the other nodes.
    * @param policy The load balancing policy.
    */
-  private def idle(client: HTableInternalClient,
-                   policy: LoadBalancerPolicy): Behavior[Command] =
+  private def idle(client: HTableInternalClient, policy: LoadBalancerPolicy): Behavior[Command] =
     Behaviors.receiveMessagePartial {
       case Schedule(nodes, shouldInvalidate) => running(client, policy, nodes, shouldInvalidate)
     }
@@ -310,24 +308,25 @@ object LoadBalancerActor {
     // Obtain the new node assignments and inform the nodes
     val futures = newAssignments
       .groupMapReduce(_._2)(p => Set(p._1))(_ ++ _)
-      .map { case (node, tablets) =>
-        client.assign(node, tablets).flatMap { _ =>
-          val futures = tablets.map { tablet =>
-            // Update metadata tablet to reflect the assignment
-            val key = ByteString(tablet.table) ++ tablet.range.start
-            val metaNode =
-              if (Tablet.isRoot(tablet))
-                node
-              else
-                newAssignments.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
-            updateMeta(client, metaNode, tablet, node)
+      .map {
+        case (node, tablets) =>
+          client.assign(node, tablets).flatMap { _ =>
+            val futures = tablets.map { tablet =>
+              // Update metadata tablet to reflect the assignment
+              val key = ByteString(tablet.table) ++ tablet.range.start
+              val metaNode =
+                if (Tablet.isRoot(tablet))
+                  node
+                else
+                  newAssignments.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
+              updateMeta(client, metaNode, tablet, node)
+            }
+            Future.sequence(futures)
           }
-          Future.sequence(futures)
-        }
       }
     context.pipeToSelf(Future.sequence(futures)) {
       case Failure(exception) => AssignFailed(exception)
-      case Success(_) => AssignSucceeded
+      case Success(_)         => AssignSucceeded
     }
 
     Behaviors.receiveMessagePartial {

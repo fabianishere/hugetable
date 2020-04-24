@@ -120,16 +120,18 @@ object AdminActor {
         } else {
           context.log.debug(s"Cleaning $table")
           val future = for {
-            _ <- client.read(Scan(table, RowRange.unbounded))
+            _ <- client
+              .read(Scan(table, RowRange.unbounded))
               .mapAsyncUnordered(8)(row => client.mutate(RowMutation(table, row.key).delete()))
               .runFold(Done)((_, _) => Done)
             _ = context.log.debug(s"Cleaning METADATA entries for $table")
-            _ <- client.read(Scan("METADATA", RowRange.leftBounded(ByteString(table))))
+            _ <- client
+              .read(Scan("METADATA", RowRange.leftBounded(ByteString(table))))
               .takeWhile { row =>
                 val res = row.cells
                   .find(_.qualifier == ByteString("table"))
                   .map(_.value.utf8String)
-                . exists(_.equalsIgnoreCase(table))
+                  .exists(_.equalsIgnoreCase(table))
                 res
               }
               .mapAsyncUnordered(8) { row =>

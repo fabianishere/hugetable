@@ -63,10 +63,11 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   override def split(tablet: Tablet, splitKey: ByteString): Future[Done] = {
     resolve(tablet)
       .via(new RequireOne(() => new IllegalArgumentException(s"Table ${tablet.table} not found")))
-      .mapAsync(1) { case (node, _) =>
-        resolver
-          .openInternal(node)
-          .split(SplitRequest(Some(tablet), splitKey))
+      .mapAsync(1) {
+        case (node, _) =>
+          resolver
+            .openInternal(node)
+            .split(SplitRequest(Some(tablet), splitKey))
       }
       .map(_ => Done)
       .runWith(Sink.head)
@@ -80,7 +81,7 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   override def read(query: Query): Source[Row, NotUsed] = {
     val nodes = query match {
       // We append a null-byte to the end of the range to make it inclusive
-      case Get(_, key)           => resolve(Tablet(query.table, RowRange(key, key ++ ByteString(0))))
+      case Get(_, key) => resolve(Tablet(query.table, RowRange(key, key ++ ByteString(0))))
       case Scan(table, range, reversed) =>
         val tablets = resolve(Tablet(table, range))
         // Make sure we reverse the tablets if our scan is reversed
@@ -168,8 +169,8 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
       if (tablet.table.equalsIgnoreCase("METADATA"))
         tablet
       else
-        Tablet("METADATA", RowRange(ByteString(tablet.table) ++ tablet.range.start,
-          ByteString(tablet.table) ++ tablet.range.end))
+        Tablet("METADATA",
+               RowRange(ByteString(tablet.table) ++ tablet.range.start, ByteString(tablet.table) ++ tablet.range.end))
 
     val meta = scanMeta(rootClient, metaTablet)
 
@@ -208,7 +209,7 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
    * @param tablet The particular tablet to look for on this client.
    * @return A source containing the METADATA rows of interest.
    */
-  private def scanMeta(client: ClientServiceClient, tablet: Tablet): Source[(Node, Tablet), NotUsed]  = {
+  private def scanMeta(client: ClientServiceClient, tablet: Tablet): Source[(Node, Tablet), NotUsed] = {
     // We append a null-byte to the end of the range to make it inclusive
     val range =
       if (tablet.range.isUnbounded || !tablet.range.isRightBounded) {
@@ -219,7 +220,6 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
         RowRange(left, right)
       }
 
-
     // Our resolve procedure works as follows:
     // 1. Scan the metadata table from the end-key until the first matching start row occurs
     // 2. Verify whether this row is still part of the table we are looking for
@@ -228,7 +228,10 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
     read(Scan("METADATA", range, reversed = true), client)
       .mapConcat(row => parseMeta(row).map(Seq(_)).getOrElse(Seq()))
       // Take rows up until we find the first row which is outside our range
-      .takeWhile { case (_, metaTablet) => !metaTablet.range.isRightBounded || Order.keyOrdering.gteq(metaTablet.range.end, tablet.range.start) }
+      .takeWhile {
+        case (_, metaTablet) =>
+          !metaTablet.range.isRightBounded || Order.keyOrdering.gteq(metaTablet.range.end, tablet.range.start)
+      }
       // Reverse the order of the cells
       .fold(List.empty[(Node, Tablet)])((acc: List[(Node, Tablet)], curr: (Node, Tablet)) => curr :: acc)
       .mapConcat[(Node, Tablet)](identity)
