@@ -5,6 +5,7 @@ import java.util
 import akka.NotUsed
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
+import com.typesafe.scalalogging.Logger
 import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
@@ -18,6 +19,7 @@ import scala.jdk.CollectionConverters._
  * An implementation of [TabletDriver] for HBase, corresponding to a single [HRegion].
  */
 class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet) extends TabletDriver {
+  private val logger = Logger[HBaseStorageDriver.type]
 
   /**
    * Perform the specified mutation in the tablet.
@@ -140,6 +142,8 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
   override def split(splitKey: ByteString): (Tablet, Tablet) = {
     region.flush(true)
 
+    logger.info(s"Splitting ${tablet} at ${splitKey}")
+
     val leftTablet = Tablet(tablet.table, RowRange(tablet.range.start, splitKey), tablet.id + 1)
     val leftDaughter = RegionInfoBuilder
       .newBuilder(region.getTableDescriptor.getTableName)
@@ -164,6 +168,8 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
 
     regionFs.commitDaughterRegion(leftDaughter)
     regionFs.commitDaughterRegion(rightDaughter)
+
+    logger.info(s"${tablet} split into $leftTablet and $rightTablet")
 
     (leftTablet, rightTablet)
   }

@@ -61,12 +61,7 @@ private[htable] class InternalServiceImpl(handler: ActorRef[NodeActor.Command])(
    */
   override def split(in: SplitRequest): Future[SplitResponse] = {
     val promise = Promise[Done]
-    in.tablet match {
-      case Some(value) =>
-        handler ! NodeActor.Split(value, in.splitKey, promise)
-      case None =>
-        promise.failure(new IllegalArgumentException())
-    }
+    handler ! NodeActor.Split(in.tableName, in.splitKey, promise)
     promise.future.map(_ => SplitResponse())
   }
 }

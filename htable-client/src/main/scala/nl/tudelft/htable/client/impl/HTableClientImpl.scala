@@ -25,10 +25,12 @@ import scala.util.Try
  *
  * @param zookeeper The ZooKeeper client used to connect to the cluster.
  * @param actorSystem The actor system to drive the client.
+ * @param actorSystemInternal A flag to indicate that the actor system is internal.
  * @param resolver The resolver used to connect to the nodes.
  */
 private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
                                        private val actorSystem: ActorSystem,
+                                       private val actorSystemInternal: Boolean,
                                        private val resolver: ServiceResolver)
     extends HTableInternalClient {
   implicit val sys: ActorSystem = actorSystem
@@ -60,14 +62,15 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
       .map(_ => Done)
   }
 
-  override def split(tablet: Tablet, splitKey: ByteString): Future[Done] = {
-    resolve(tablet)
-      .via(new RequireOne(() => new IllegalArgumentException(s"Table ${tablet.table} not found")))
+  override def split(table: String, splitKey: ByteString): Future[Done] = {
+    resolve(Tablet(table, RowRange.leftBounded(splitKey)))
+      .via(new RequireOne(() => new IllegalArgumentException(s"Table ${table} not found")))
+      .take(1)
       .mapAsync(1) {
         case (node, _) =>
           resolver
             .openInternal(node)
-            .split(SplitRequest(Some(tablet), splitKey))
+            .split(SplitRequest(table, splitKey))
       }
       .map(_ => Done)
       .runWith(Sink.head)
@@ -153,10 +156,13 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   override def closed(): Future[Done] = promise.future
 
   override def close(): Future[Done] = {
-    zookeeper.close()
-    actorSystem
-      .terminate()
-      .onComplete(t => promise.complete(t.map(_ => Done)))
+    if (actorSystemInternal) {
+      actorSystem
+        .terminate()
+        .onComplete(t => promise.tryComplete(t.map(_ => Done)))
+    } else {
+      promise.trySuccess(Done)
+    }
     promise.future
   }
 
@@ -229,7 +235,7 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
       .mapConcat(row => parseMeta(row).map(Seq(_)).getOrElse(Seq()))
       // Take rows up until we find the first row which is outside our range
       .takeWhile {
-        case (_, metaTablet) =>
+        case (metaNode, metaTablet) =>
           !metaTablet.range.isRightBounded || Order.keyOrdering.gteq(metaTablet.range.end, tablet.range.start)
       }
       // Reverse the order of the cells

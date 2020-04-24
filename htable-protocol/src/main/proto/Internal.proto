@@ -62,8 +62,8 @@ message AddTabletsResponse {
 message SplitRequest {
     option (scalapb.message).extends = "nl.tudelft.htable.protocol.internal.InternalRequest";
 
-    // The tablet to split.
-    Tablet tablet = 1;
+    // The table to split.
+    string table_name = 1;
 
     // The key at which to split the tablet.
     bytes split_key = 2;

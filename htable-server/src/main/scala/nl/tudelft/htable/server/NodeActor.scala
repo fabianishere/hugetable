@@ -56,9 +56,9 @@ object NodeActor {
   final case class Mutate(mutation: RowMutation, promise: Promise[Done]) extends Command
 
   /**
-   * Request the server to split a tablet.
+   * Request the server to split a table.
    */
-  final case class Split(tablet: Tablet, splitKey: ByteString, promise: Promise[Done]) extends Command
+  final case class Split(table: String, splitKey: ByteString, promise: Promise[Done]) extends Command
 
   /**
    * Events emitted by the [NodeActor].
@@ -234,19 +234,19 @@ object NodeActor {
               promise.failure(NotServingTabletException(s"The key ${mutation.key} is not served"))
           }
           Behaviors.same
-        case Split(tablet, splitKey, promise) =>
-          context.log.debug(s"SPLIT: $tablet at $splitKey on $self")
-          find(tablet.table, tablet.range.start) match {
+        case Split(table, splitKey, promise) =>
+          context.log.debug(s"SPLIT: $table at $splitKey on $self")
+          find(table, splitKey) match {
             case Some(driver) =>
               try {
-                context.log.trace(s"SPLIT: Asking ${driver.tablet} for ${splitKey} in ${tablet.table}")
+                context.log.trace(s"SPLIT: Asking ${driver.tablet} for $splitKey in $table")
 
                 val (left, right) = driver.split(splitKey)
                 promise.completeWith(for {
-                  _ <- client.mutate(MetaHelpers.writeExisting(tablet, TabletState.Closed, None))
+                  _ <- client.mutate(MetaHelpers.writeExisting(driver.tablet, TabletState.Closed, None))
                   _ <- client.mutate(MetaHelpers.writeNew(left, TabletState.Unassigned, None))
                   _ <- client.mutate(MetaHelpers.writeNew(right, TabletState.Unassigned, None))
-                  _ <- client.balance(Set(tablet, left, right))
+                  _ <- client.balance(Set(driver.tablet, left, right))
                 } yield Done)
               } catch {
                 case e: Throwable =>
@@ -254,8 +254,8 @@ object NodeActor {
                   promise.failure(e)
               }
             case None =>
-              context.log.debug(s"SPLIT: Unknown ${tablet.range} in ${tablet.table}")
-              promise.failure(NotServingTabletException(s"The tablet $tablet is not served"))
+              context.log.debug(s"SPLIT: Unknown $splitKey in $table")
+              promise.failure(NotServingTabletException(s"The table $table is not served at $splitKey"))
           }
           Behaviors.same
       }

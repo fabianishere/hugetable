@@ -147,7 +147,7 @@ object Main {
           .deleteTable(conf.createTable.table())
       case Some(conf.split) =>
         client
-          .split(Tablet(conf.split.table(), RowRange.leftBounded(conf.split.startKey())), conf.split.splitKey())
+          .split(conf.split.table(), conf.split.splitKey())
       case Some(conf.balance) =>
         client.balance(Set.empty, conf.balance.invalidate())
       case Some(conf.listServers) =>
@@ -317,15 +317,9 @@ object Main {
       val table = trailArg[String](required = true)
 
       /**
-       * The start key of the tablet to split
-       */
-      val startKey = opt[String](descr = "The key of the tablet", default = Some("")).map(s => ByteString(s))
-
-      /**
        * The split point.
        */
-      val splitKey =
-        opt[String](descr = "The key at which to split the table", default = Some("")).map(s => ByteString(s))
+      val splitKey = trailArg[String](descr = "The key at which to split the table", required = true).map(ByteString(_))
     }
     addSubcommand(split)
 

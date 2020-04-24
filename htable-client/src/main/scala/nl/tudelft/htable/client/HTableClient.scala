@@ -32,10 +32,10 @@ trait HTableClient {
   /**
    * Split a tablet in the database.
    *
-   * @param tablet The tablet to split.
+   * @param table The table to split.
    * @param splitKey The key at which to split the tablet.
    */
-  def split(tablet: Tablet, splitKey: ByteString): Future[Done]
+  def split(table: String, splitKey: ByteString): Future[Done]
 
   /**
    * Balance the given set of tablets.
@@ -87,14 +87,14 @@ object HTableClient {
    * Construct a [HTableClient] using the given ZooKeeper client.
    */
   def apply(zookeeper: CuratorFramework, resolver: ServiceResolver): HTableClient =
-    new HTableClientImpl(zookeeper, ActorSystem("client"), resolver)
+    new HTableClientImpl(zookeeper, ActorSystem("client"), true, resolver)
 
   /**
    * Construct a [HTableClient] using the given ZooKeeper client.
    */
   def apply(zookeeper: CuratorFramework): HTableClient = {
     val system = ActorSystem("client")
-    new HTableClientImpl(zookeeper, system, new CachingServiceResolver(new DefaultServiceResolverImpl(system)))
+    new HTableClientImpl(zookeeper, system, true, new CachingServiceResolver(new DefaultServiceResolverImpl(system)))
   }
 
   /**
@@ -103,5 +103,5 @@ object HTableClient {
   private[htable] def createInternal(zookeeper: CuratorFramework,
                                      actorSystem: ActorSystem,
                                      resolver: ServiceResolver): HTableInternalClient =
-    new HTableClientImpl(zookeeper, actorSystem, resolver)
+    new HTableClientImpl(zookeeper, actorSystem, false, resolver)
 }

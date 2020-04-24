@@ -91,7 +91,7 @@ object ExperimentRunner {
     for (i <- 1 until splits) {
       val splitPoint = s"row_${maxSize - (i * splitSize)}"
       logger.info(s"Split at $splitPoint")
-      Await.ready(client.split(Tablet("test", RowRange.unbounded), splitKey = ByteString(splitPoint)), 100.seconds)
+      Await.ready(client.split("test", splitKey = ByteString(splitPoint)), 100.seconds)
 
       // Wait a bit for the change to process
       Thread.sleep(1000)
@@ -144,6 +144,7 @@ object ExperimentRunner {
         for (i <- 0 until conf.ops() / conf.threads()) {
           val nextRow = random.nextInt(maxRows)
           val start = System.currentTimeMillis()
+          logger.info(s"Next row at $nextRow $read")
           val result =
             if (read) {
               val scan: Scan = Scan("test", RowRange.prefix(ByteString("row" + nextRow)))
@@ -154,7 +155,14 @@ object ExperimentRunner {
               client.mutate(mutation)
             }
 
-          Await.result(result, 100.seconds)
+          try {
+            Await.result(result, 100.seconds)
+          } catch {
+            case e: Throwable =>
+              logger.error("Failed to run operation", e)
+              client.close()
+              throw e
+          }
 
           val end = System.currentTimeMillis()
           val duration = end - start
@@ -173,7 +181,7 @@ object ExperimentRunner {
       }
     }
 
-    Await.ready(Future.sequence(futures), 10.minutes)
+    Await.result(Future.sequence(futures), 10.minutes)
 
     val trialEnd = System.currentTimeMillis()
     val trialDuration = trialEnd - trialStart
@@ -201,11 +209,18 @@ object ExperimentRunner {
 
     // Clean existing table
     val client = HTableClient(zookeeper)
-    val future = client.read(Scan("test", RowRange.unbounded))
-      .mapAsyncUnordered(8)(row => client.mutate(RowMutation("test", row.key).delete()))
-      .runFold(Done)((_, _) => Done)
-    Await.ready(future, 100.seconds)
-    client.close()
+    try {
+      val future = client.read(Scan("test", RowRange.unbounded))
+        .mapAsyncUnordered(8)(row => client.mutate(RowMutation("test", row.key).delete()))
+        .runFold(Done)((_, _) => Done)
+      Await.result(future, 100.seconds)
+    } catch {
+      case e: Throwable =>
+        logger.error("Failed to vacuum table", e)
+        throw e
+    } finally {
+      client.close()
+    }
   }
 
   /**

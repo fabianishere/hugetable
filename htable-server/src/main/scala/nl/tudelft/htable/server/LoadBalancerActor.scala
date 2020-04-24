@@ -319,7 +319,14 @@ object LoadBalancerActor {
                   node
                 else
                   newAssignments.rangeTo(Tablet("METADATA", RowRange.leftBounded(key))).last._2
-              updateMeta(client, metaNode, tablet, node)
+
+              // Only update meta if the node that is hosting the tablet has changed.
+              if (!previousAssignments.get(tablet).exists(_.contains(node))) {
+                updateMeta(client, metaNode, tablet, node)
+              } else {
+                context.log.debug(s"Skipping ${tablet}: already assigned to $node")
+                Future.successful(Done)
+              }
             }
             Future.sequence(futures)
           }
