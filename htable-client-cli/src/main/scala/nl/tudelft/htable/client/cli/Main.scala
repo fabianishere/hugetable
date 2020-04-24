@@ -141,10 +141,10 @@ object Main {
           .mutate(mutation)
       case Some(conf.createTable) =>
         client
-          .create(conf.createTable.table())
+          .createTable(conf.createTable.table())
       case Some(conf.deleteTable) =>
         client
-          .delete(conf.createTable.table())
+          .deleteTable(conf.createTable.table())
       case Some(conf.split) =>
         client
           .split(Tablet(conf.split.table(), RowRange.leftBounded(conf.split.startKey())), conf.split.splitKey())

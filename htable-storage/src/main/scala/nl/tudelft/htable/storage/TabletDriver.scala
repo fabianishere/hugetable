@@ -1,7 +1,5 @@
 package nl.tudelft.htable.storage
 
-import java.io.Closeable
-
 import akka.NotUsed
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
@@ -10,7 +8,7 @@ import nl.tudelft.htable.core.{Query, Row, RowMutation, Tablet}
 /**
  * A driver for managing a particular tablet.
  */
-trait TabletDriver extends Closeable {
+trait TabletDriver {
 
   /**
    * The tablet that this driver is serving.
@@ -31,4 +29,11 @@ trait TabletDriver extends Closeable {
    * Split the tablet into two tablets at the specified split key.
    */
   def split(splitKey: ByteString): (Tablet, Tablet)
+
+  /**
+   * Close the specified tablet.
+   *
+   * @param delete A flag to indicate that the tablet should be deleted.
+   */
+  def close(delete: Boolean = false): Unit
 }

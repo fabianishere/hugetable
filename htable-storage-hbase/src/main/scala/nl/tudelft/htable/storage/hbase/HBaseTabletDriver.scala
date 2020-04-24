@@ -9,7 +9,7 @@ import nl.tudelft.htable.core
 import nl.tudelft.htable.core._
 import nl.tudelft.htable.storage.TabletDriver
 import org.apache.hadoop.hbase.client.{Delete, Get, Put, RegionInfoBuilder, Scan}
-import org.apache.hadoop.hbase.regionserver.{HRegion, Region, RegionScanner}
+import org.apache.hadoop.hbase.regionserver.{HRegion, HRegionFileSystem, Region, RegionScanner}
 import org.apache.hadoop.hbase.{Cell, CellBuilderFactory, CellBuilderType, CellUtil}
 
 import scala.jdk.CollectionConverters._
@@ -109,11 +109,7 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
               try {
                 more = scanner.nextRaw(cells)
               } finally {
-                try {
-                  region.closeRegionOperation(Region.Operation.SCAN)
-                } catch {
-                  case _: IllegalMonitorStateException => // XXX We ignore lock failures for now
-                }
+                region.closeRegionOperation(Region.Operation.SCAN)
               }
 
               val scalaCells = cells.asScala
@@ -172,10 +168,23 @@ class HBaseTabletDriver(private val region: HRegion, override val tablet: Tablet
     (leftTablet, rightTablet)
   }
 
-  override def close(): Unit = {
-    // Force flush for now to not lose changes when terminating the process
-    region.flush(true)
-    region.close()
+
+  override def close(delete: Boolean): Unit = {
+    if (delete) {
+      val conf = region.getFilesystem.getConf
+      val fs = region.getFilesystem
+      val tableDir = region.getRegionFileSystem.getTableDir
+      val regionInfo = region.getRegionInfo
+
+      region.close()
+
+      // Delete the entire region directory
+      HRegionFileSystem.deleteRegionFromFileSystem(conf, fs, tableDir, regionInfo)
+    } else {
+      // Force flush for now to not lose changes when terminating the process
+      region.flush(true)
+      region.close()
+    }
   }
 
   /**

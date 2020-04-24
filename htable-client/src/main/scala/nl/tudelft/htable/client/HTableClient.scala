@@ -20,14 +20,14 @@ trait HTableClient {
    *
    * @param name The name of the table to create.
    */
-  def create(name: String): Future[Done]
+  def createTable(name: String): Future[Done]
 
   /**
    * Delete a table.
    *
    * @param name The name of the table to delete.
    */
-  def delete(name: String): Future[Done]
+  def deleteTable(name: String): Future[Done]
 
   /**
    * Split a tablet in the database.

@@ -118,26 +118,36 @@ object AdminActor {
         if (table.equalsIgnoreCase("METADATA")) {
           promise.failure(new IllegalArgumentException("Refusing to remove METADATA"))
         } else {
-          client
-            .read(Scan("METADATA", RowRange.leftBounded(ByteString(table))))
-            .takeWhile { row =>
-              val res = row.cells
-                .find(_.qualifier == ByteString("table"))
-                .map(_.value.utf8String)
-                .exists(_.equalsIgnoreCase(table))
-              res
-            }
-            .flatMapConcat { row =>
-              val mutation = RowMutation("METADATA", row.key).delete()
-              Source.future(client.mutate(mutation))
-            }
-            .runWith(Sink.onComplete(res => {
-              if (res.isFailure) {
-                context.log.error("Failed to complete removal", res.failed.get)
+          context.log.debug(s"Cleaning $table")
+          val future = for {
+            _ <- client.read(Scan(table, RowRange.unbounded))
+              .mapAsyncUnordered(8)(row => client.mutate(RowMutation(table, row.key).delete()))
+              .runFold(Done)((_, _) => Done)
+            _ = context.log.debug(s"Cleaning METADATA entries for $table")
+            _ <- client.read(Scan("METADATA", RowRange.leftBounded(ByteString(table))))
+              .takeWhile { row =>
+                val res = row.cells
+                  .find(_.qualifier == ByteString("table"))
+                  .map(_.value.utf8String)
+                . exists(_.equalsIgnoreCase(table))
+                res
               }
-              listener ! Balanced(Set.empty)
-              promise.complete(res)
-            }))
+              .mapAsyncUnordered(8) { row =>
+                val mutation = RowMutation("METADATA", row.key).delete()
+                client.mutate(mutation)
+              }
+              .runFold(Done)((_, _) => Done)
+          } yield Done
+
+          future.onComplete { res =>
+            if (res.isFailure) {
+              context.log.error("Failed to complete removal", res.failed.get)
+            } else {
+              context.log.debug(s"Successfully deleted table $table")
+            }
+            listener ! Balanced(Set.empty)
+            promise.complete(res)
+          }
         }
         Behaviors.same
       case Balance(tablets, shouldInvalidate, promise) =>

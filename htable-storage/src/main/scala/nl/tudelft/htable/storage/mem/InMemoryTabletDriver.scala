@@ -97,7 +97,7 @@ private[mem] class InMemoryTabletDriver(override val tablet: Tablet, initialCell
     (leftTablet, rightTablet)
   }
 
-  override def close(): Unit = {
+  override def close(delete: Boolean): Unit = {
     isClosed = true
   }
 }

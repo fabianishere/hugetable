@@ -21,6 +21,11 @@ private[hbase] object SplitUtils {
     val files = regionFs.getStoreFiles("hregion").asScala
     val hcd = htd.getColumnFamily("hregion".getBytes("UTF-8"))
 
+    // In case the tablet is empty
+    if (files == null) {
+      return
+    }
+
     // Traverse all store files and split them
     for (storeFileInfo <- files if !storeFileInfo.isReference) {
       splitStore(

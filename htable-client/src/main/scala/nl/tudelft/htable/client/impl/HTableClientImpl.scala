@@ -46,13 +46,13 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
     client.balance(BalanceRequest(tablets.toSeq, shouldInvalidate)).map(_ => Done)
   }
 
-  override def create(name: String): Future[Done] = {
+  override def createTable(name: String): Future[Done] = {
     val node = resolveMaster()
     val client = resolver.openAdmin(node)
     client.createTable(CreateTableRequest(name)).map(_ => Done)
   }
 
-  override def delete(name: String): Future[Done] = {
+  override def deleteTable(name: String): Future[Done] = {
     val node = resolveMaster()
     val client = resolver.openAdmin(node)
     client
@@ -63,12 +63,10 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   override def split(tablet: Tablet, splitKey: ByteString): Future[Done] = {
     resolve(tablet)
       .via(new RequireOne(() => new IllegalArgumentException(s"Table ${tablet.table} not found")))
-      .flatMapConcat {
-        case (node, _) =>
-          Source.future(
-            resolver
-              .openInternal(node)
-              .split(SplitRequest(Some(tablet), splitKey)))
+      .mapAsync(1) { case (node, _) =>
+        resolver
+          .openInternal(node)
+          .split(SplitRequest(Some(tablet), splitKey))
       }
       .map(_ => Done)
       .runWith(Sink.head)
@@ -129,7 +127,7 @@ private[client] class HTableClientImpl(private val zookeeper: CuratorFramework,
   override def mutate(mutation: RowMutation): Future[Done] = {
     resolve(Tablet(mutation.table, RowRange(mutation.key, mutation.key ++ ByteString(0))))
       .via(new RequireOne(() => new IllegalArgumentException(s"Table ${mutation.table} not found")))
-      .flatMapConcat { case (node, _) => Source.future(mutate(node, mutation)) }
+      .mapAsync(1) { case (node, _) => mutate(node, mutation) }
       .runForeach(_ => ())
   }
 

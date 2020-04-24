@@ -73,7 +73,7 @@ abstract class AbstractIntegrationTest {
   @Order(2)
   @DisplayName("create-table is successful")
   def testCreateTable(): Unit = {
-    val future = client.create("test")
+    val future = client.createTable("test")
     Await.result(future, 5.seconds)
 
     // Wait a few seconds before the change is propagated
@@ -367,7 +367,7 @@ abstract class AbstractIntegrationTest {
   @Order(16)
   @DisplayName("delete-table is successful")
   def testDeleteTable(): Unit = {
-    val future = client.delete("test")
+    val future = client.deleteTable("test")
 
     Await.result(future, 5.seconds)
 
