@@ -6,10 +6,10 @@ Open-source implementation of Google's [BigTable](https://research.google/pubs/p
 ### Obtaining the source code
 Download the source code by running the following code in your command prompt:
 ```shell script
-git clone https://github.com/fabianishere/in4391.git
+git clone https://github.com/fabianishere/hugetable.git
 ```
 or simply 
-[grab](https://github.com/fabianishere/in4391/archive/master.zip) 
+[grab](https://github.com/fabianishere/hugetable/archive/master.zip) 
 a copy of the source code as a Zip file.
 
 ### Building the project
@@ -54,4 +54,4 @@ Make sure again that you specify the correct ZooKeeper port. Then, enter `help` 
 can execute in the cluster.
 
 ## License
-HugeTable is available under the [MIT license](https://github.com/fabianishere/in4391/blob/master/LICENSE.txt).
+HugeTable is available under the [MIT license](https://github.com/fabianishere/hugetable/blob/master/LICENSE.txt).
